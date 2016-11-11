@@ -1,7 +1,7 @@
 # encoding: utf-8
 #
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -19,7 +19,7 @@
 
 require File.expand_path('../../test_helper', __FILE__)
 
-class AttachmentsControllerTest < ActionController::TestCase
+class AttachmentsControllerTest < Redmine::ControllerTest
   fixtures :users, :projects, :roles, :members, :member_roles,
            :enabled_modules, :issues, :trackers, :attachments,
            :versions, :wiki_pages, :wikis, :documents
@@ -38,7 +38,7 @@ class AttachmentsControllerTest < ActionController::TestCase
       # 060719210727_changeset_utf8.diff
       get :show, :id => 14, :type => dt
       assert_response :success
-      assert_template 'diff'
+
       assert_equal 'text/html', @response.content_type
       assert_select 'th.filename', :text => /issues_controller.rb\t\(révision 1484\)/
       assert_select 'td.line-code', :text => /Demande créée avec succès/
@@ -52,7 +52,7 @@ class AttachmentsControllerTest < ActionController::TestCase
         # 060719210727_changeset_iso8859-1.diff
         get :show, :id => 5, :type => dt
         assert_response :success
-        assert_template 'diff'
+
         assert_equal 'text/html', @response.content_type
         assert_select 'th.filename', :text => /issues_controller.rb\t\(r\?vision 1484\)/
         assert_select 'td.line-code', :text => /Demande cr\?\?e avec succ\?s/
@@ -67,7 +67,7 @@ class AttachmentsControllerTest < ActionController::TestCase
         # 060719210727_changeset_iso8859-1.diff
         get :show, :id => 5, :type => dt
         assert_response :success
-        assert_template 'diff'
+
         assert_equal 'text/html', @response.content_type
         assert_select 'th.filename', :text => /issues_controller.rb\t\(révision 1484\)/
         assert_select 'td.line-code', :text => /Demande créée avec succès/
@@ -82,16 +82,15 @@ class AttachmentsControllerTest < ActionController::TestCase
     user1.preference.save
     user = User.find(1)
     assert_nil user.pref[:diff_type]
-
     @request.session[:user_id] = 1 # admin
+
     get :show, :id => 5
     assert_response :success
-    assert_template 'diff'
     user.reload
     assert_equal "inline", user.pref[:diff_type]
+
     get :show, :id => 5, :type => 'sbs'
     assert_response :success
-    assert_template 'diff'
     user.reload
     assert_equal "sbs", user.pref[:diff_type]
   end
@@ -106,7 +105,6 @@ class AttachmentsControllerTest < ActionController::TestCase
 
     get :show, :id => a.id, :type => 'inline'
     assert_response :success
-    assert_template 'diff'
     assert_equal 'text/html', @response.content_type
     assert_select 'th.filename', :text => 'test1.txt'
   end
@@ -114,7 +112,6 @@ class AttachmentsControllerTest < ActionController::TestCase
   def test_show_text_file
     get :show, :id => 4
     assert_response :success
-    assert_template 'file'
     assert_equal 'text/html', @response.content_type
     set_tmp_attachments_directory
   end
@@ -131,7 +128,6 @@ class AttachmentsControllerTest < ActionController::TestCase
 
     get :show, :id => a.id
     assert_response :success
-    assert_template 'file'
     assert_equal 'text/html', @response.content_type
     assert_select 'tr#L1' do
       assert_select 'th.line-num', :text => '1'
@@ -150,7 +146,6 @@ class AttachmentsControllerTest < ActionController::TestCase
 
       get :show, :id => a.id
       assert_response :success
-      assert_template 'file'
       assert_equal 'text/html', @response.content_type
       assert_select 'tr#L7' do
         assert_select 'th.line-num', :text => '7'
@@ -170,7 +165,6 @@ class AttachmentsControllerTest < ActionController::TestCase
 
       get :show, :id => a.id
       assert_response :success
-      assert_template 'file'
       assert_equal 'text/html', @response.content_type
       assert_select 'tr#L7' do
         assert_select 'th.line-num', :text => '7'
@@ -179,20 +173,31 @@ class AttachmentsControllerTest < ActionController::TestCase
     end
   end
 
-  def test_show_text_file_should_send_if_too_big
+  def test_show_text_file_should_show_other_if_too_big
+    @request.session[:user_id] = 2
     with_settings :file_max_size_displayed => 512 do
       Attachment.find(4).update_attribute :filesize, 754.kilobyte
       get :show, :id => 4
       assert_response :success
-      assert_equal 'application/x-ruby', @response.content_type
+      assert_equal 'text/html', @response.content_type
+      assert_select '.nodata', :text => 'No preview available'
     end
     set_tmp_attachments_directory
   end
 
-  def test_show_other
-    get :show, :id => 6
+  def test_show_image
+    @request.session[:user_id] = 2
+    get :show, :id => 16
     assert_response :success
-    assert_equal 'application/zip', @response.content_type
+    assert_equal 'text/html', @response.content_type
+    assert_select 'img.filecontent', :src => attachments(:attachments_010).filename
+  end
+
+  def test_show_other
+    @request.session[:user_id] = 2
+    get :show, :id => 6
+    assert_equal 'text/html', @response.content_type
+    assert_select '.nodata', :text => 'No preview available'
     set_tmp_attachments_directory
   end
 
@@ -245,6 +250,19 @@ class AttachmentsControllerTest < ActionController::TestCase
     assert_response 304
 
     set_tmp_attachments_directory
+  end
+
+  def test_download_js_file
+    set_tmp_attachments_directory
+    attachment = Attachment.create!(
+      :file => mock_file_with_options(:original_filename => "hello.js", :content_type => "text/javascript"),
+      :author_id => 2,
+      :container => Issue.find(1)
+    )
+
+    get :download, :id => attachment.id
+    assert_response :success
+    assert_equal 'text/javascript', @response.content_type
   end
 
   def test_download_version_file_with_issue_tracking_disabled
@@ -336,17 +354,16 @@ class AttachmentsControllerTest < ActionController::TestCase
     puts '(ImageMagick convert not available)'
   end
 
-  def test_edit
+  def test_edit_all
     @request.session[:user_id] = 2
-    get :edit, :object_type => 'issues', :object_id => '2'
+    get :edit_all, :object_type => 'issues', :object_id => '2'
     assert_response :success
-    assert_template 'edit'
-
-    container = Issue.find(2)
-    assert_equal container, assigns(:container)
-    assert_equal container.attachments.size, assigns(:attachments).size
 
     assert_select 'form[action=?]', '/attachments/issues/2' do
+      Issue.find(2).attachments.each do |attachment|
+        assert_select "tr#attachment-#{attachment.id}"
+      end
+
       assert_select 'tr#attachment-4' do
         assert_select 'input[name=?][value=?]', 'attachments[4][filename]', 'source.rb'
         assert_select 'input[name=?][value=?]', 'attachments[4][description]', 'This is a Ruby source file'
@@ -354,24 +371,24 @@ class AttachmentsControllerTest < ActionController::TestCase
     end
   end
 
-  def test_edit_invalid_container_class_should_return_404
-    get :edit, :object_type => 'nuggets', :object_id => '3'
+  def test_edit_all_with_invalid_container_class_should_return_404
+    get :edit_all, :object_type => 'nuggets', :object_id => '3'
     assert_response 404
   end
 
-  def test_edit_invalid_object_should_return_404
-    get :edit, :object_type => 'issues', :object_id => '999'
+  def test_edit_all_with_invalid_object_should_return_404
+    get :edit_all, :object_type => 'issues', :object_id => '999'
     assert_response 404
   end
 
-  def test_edit_for_object_that_is_not_visible_should_return_403
-    get :edit, :object_type => 'issues', :object_id => '4'
+  def test_edit_all_for_object_that_is_not_visible_should_return_403
+    get :edit_all, :object_type => 'issues', :object_id => '4'
     assert_response 403
   end
 
-  def test_update
+  def test_update_all
     @request.session[:user_id] = 2
-    patch :update, :object_type => 'issues', :object_id => '2', :attachments => {
+    patch :update_all, :object_type => 'issues', :object_id => '2', :attachments => {
         '1' => {:filename => 'newname.text', :description => ''},
         '4' => {:filename => 'newname.rb', :description => 'Renamed'},
       }
@@ -382,15 +399,14 @@ class AttachmentsControllerTest < ActionController::TestCase
     assert_equal 'Renamed', attachment.description
   end
 
-  def test_update_with_failure
+  def test_update_all_with_failure
     @request.session[:user_id] = 2
-    patch :update, :object_type => 'issues', :object_id => '3', :attachments => {
+    patch :update_all, :object_type => 'issues', :object_id => '3', :attachments => {
         '1' => {:filename => '', :description => ''},
         '4' => {:filename => 'newname.rb', :description => 'Renamed'},
       }
 
     assert_response :success
-    assert_template 'edit'
     assert_select_error /file cannot be blank/i
 
     # The other attachment should not be updated

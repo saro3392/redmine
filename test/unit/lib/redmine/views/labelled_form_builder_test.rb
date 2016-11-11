@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -17,7 +17,8 @@
 
 require File.expand_path('../../../../../test_helper', __FILE__)
 
-class Redmine::Views::LabelledFormBuilderTest < ActionView::TestCase
+class Redmine::Views::LabelledFormBuilderTest < Redmine::HelperTest
+  include Rails.application.routes.url_helpers
 
   def test_label_should_output_one_element
     set_language_if_valid 'en'

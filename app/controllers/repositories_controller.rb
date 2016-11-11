@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -28,31 +28,22 @@ class RepositoriesController < ApplicationController
   menu_item :settings, :only => [:new, :create, :edit, :update, :destroy, :committers]
   default_search_scope :changesets
 
-  before_filter :find_project_by_project_id, :only => [:new, :create]
-  before_filter :find_repository, :only => [:edit, :update, :destroy, :committers]
-  before_filter :find_project_repository, :except => [:new, :create, :edit, :update, :destroy, :committers]
-  before_filter :find_changeset, :only => [:revision, :add_related_issue, :remove_related_issue]
-  before_filter :authorize
+  before_action :find_project_by_project_id, :only => [:new, :create]
+  before_action :build_new_repository_from_params, :only => [:new, :create]
+  before_action :find_repository, :only => [:edit, :update, :destroy, :committers]
+  before_action :find_project_repository, :except => [:new, :create, :edit, :update, :destroy, :committers]
+  before_action :find_changeset, :only => [:revision, :add_related_issue, :remove_related_issue]
+  before_action :authorize
   accept_rss_auth :revisions
 
   rescue_from Redmine::Scm::Adapters::CommandFailed, :with => :show_error_command_failed
 
   def new
-    scm = params[:repository_scm] || (Redmine::Scm::Base.all & Setting.enabled_scm).first
-    @repository = Repository.factory(scm)
     @repository.is_default = @project.repository.nil?
-    @repository.project = @project
   end
 
   def create
-    attrs = pickup_extra_info
-    @repository = Repository.factory(params[:repository_scm])
-    @repository.safe_attributes = params[:repository]
-    if attrs[:attrs_extra].keys.any?
-      @repository.merge_extra_info(attrs[:attrs_extra])
-    end
-    @repository.project = @project
-    if request.post? && @repository.save
+    if @repository.save
       redirect_to settings_project_path(@project, :tab => 'repositories')
     else
       render :action => 'new'
@@ -63,32 +54,13 @@ class RepositoriesController < ApplicationController
   end
 
   def update
-    attrs = pickup_extra_info
-    @repository.safe_attributes = attrs[:attrs]
-    if attrs[:attrs_extra].keys.any?
-      @repository.merge_extra_info(attrs[:attrs_extra])
-    end
-    @repository.project = @project
+    @repository.safe_attributes = params[:repository]
     if @repository.save
       redirect_to settings_project_path(@project, :tab => 'repositories')
     else
       render :action => 'edit'
     end
   end
-
-  def pickup_extra_info
-    p       = {}
-    p_extra = {}
-    params[:repository].each do |k, v|
-      if k =~ /^extra_/
-        p_extra[k] = v
-      else
-        p[k] = v
-      end
-    end
-    {:attrs => p, :attrs_extra => p_extra}
-  end
-  private :pickup_extra_info
 
   def committers
     @committers = @repository.committers
@@ -116,7 +88,7 @@ class RepositoriesController < ApplicationController
     @entries = @repository.entries(@path, @rev)
     @changeset = @repository.find_changeset_by_name(@rev)
     if request.xhr?
-      @entries ? render(:partial => 'dir_list_content') : render(:nothing => true)
+      @entries ? render(:partial => 'dir_list_content') : head(200)
     else
       (show_error_not_found; return) unless @entries
       @changesets = @repository.latest_changesets(@path, @rev)
@@ -168,22 +140,26 @@ class RepositoriesController < ApplicationController
     # If the entry is a dir, show the browser
     (show; return) if @entry.is_dir?
 
-    @content = @repository.cat(@path, @rev)
-    (show_error_not_found; return) unless @content
-    if is_raw ||
-         (@content.size && @content.size > Setting.file_max_size_displayed.to_i.kilobyte) ||
-         ! is_entry_text_data?(@content, @path)
+    if is_raw
       # Force the download
       send_opt = { :filename => filename_for_content_disposition(@path.split('/').last) }
       send_type = Redmine::MimeType.of(@path)
       send_opt[:type] = send_type.to_s if send_type
-      send_opt[:disposition] = (Redmine::MimeType.is_type?('image', @path) && !is_raw ? 'inline' : 'attachment')
-      send_data @content, send_opt
+      send_opt[:disposition] = disposition(@path)
+      send_data @repository.cat(@path, @rev), send_opt
     else
-      # Prevent empty lines when displaying a file with Windows style eol
-      # TODO: UTF-16
-      # Is this needs? AttachmentsController reads file simply.
-      @content.gsub!("\r\n", "\n")
+      if !@entry.size || @entry.size <= Setting.file_max_size_displayed.to_i.kilobyte
+        content = @repository.cat(@path, @rev)
+        (show_error_not_found; return) unless content
+
+        if content.size <= Setting.file_max_size_displayed.to_i.kilobyte &&
+           is_entry_text_data?(content, @path)
+          # TODO: UTF-16
+          # Prevent empty lines when displaying a file with Windows style eol
+          # Is this needed? AttachmentsController simply reads file.
+          @content = content.gsub("\r\n", "\n")
+        end
+      end
       @changeset = @repository.find_changeset_by_name(@rev)
     end
   end
@@ -207,14 +183,17 @@ class RepositoriesController < ApplicationController
 
     @annotate = @repository.scm.annotate(@path, @rev)
     if @annotate.nil? || @annotate.empty?
-      (render_error l(:error_scm_annotate); return)
-    end
-    ann_buf_size = 0
-    @annotate.lines.each do |buf|
-      ann_buf_size += buf.size
-    end
-    if ann_buf_size > Setting.file_max_size_displayed.to_i.kilobyte
-      (render_error l(:error_scm_annotate_big_text_file); return)
+      @annotate = nil
+      @error_message = l(:error_scm_annotate)
+    else
+      ann_buf_size = 0
+      @annotate.lines.each do |buf|
+        ann_buf_size += buf.size
+      end
+      if ann_buf_size > Setting.file_max_size_displayed.to_i.kilobyte
+        @annotate = nil
+        @error_message = l(:error_scm_annotate_big_text_file)
+      end
     end
     @changeset = @repository.find_changeset_by_name(@rev)
   end
@@ -301,6 +280,18 @@ class RepositoriesController < ApplicationController
 
   private
 
+  def build_new_repository_from_params
+    scm = params[:repository_scm] || (Redmine::Scm::Base.all & Setting.enabled_scm).first
+    unless @repository = Repository.factory(scm)
+      render_404
+      return
+    end
+
+    @repository.project = @project
+    @repository.safe_attributes = params[:repository]
+    @repository
+  end
+
   def find_repository
     @repository = Repository.find(params[:id])
     @project = @repository.project
@@ -350,7 +341,7 @@ class RepositoriesController < ApplicationController
   end
 
   def graph_commits_per_month(repository)
-    @date_to = Date.today
+    @date_to = User.current.today
     @date_from = @date_to << 11
     @date_from = Date.civil(@date_from.year, @date_from.month, 1)
     commits_by_day = Changeset.
@@ -369,7 +360,8 @@ class RepositoriesController < ApplicationController
     changes_by_day.each {|c| changes_by_month[(@date_to.month - c.first.to_date.month) % 12] += c.last }
 
     fields = []
-    12.times {|m| fields << month_name(((Date.today.month - 1 - m) % 12) + 1)}
+    today = User.current.today
+    12.times {|m| fields << month_name(((today.month - 1 - m) % 12) + 1)}
 
     graph = SVG::Graph::Bar.new(
       :height => 300,
@@ -435,5 +427,13 @@ class RepositoriesController < ApplicationController
       :title => l(:label_change_plural)
     )
     graph.burn
+  end
+
+  def disposition(path)
+    if Redmine::MimeType.is_type?('image', @path) || Redmine::MimeType.of(@path) == "application/pdf"
+      'inline'
+    else
+      'attachment'
+    end
   end
 end

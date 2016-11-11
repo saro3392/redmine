@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -21,6 +21,8 @@ if ENV["COVERAGE"]
   SimpleCov.formatter = Redmine::Coverage::HtmlFormatter
   SimpleCov.start 'rails'
 end
+
+$redmine_test_ldap_server = ENV['REDMINE_TEST_LDAP_SERVER'] || '127.0.0.1'
 
 ENV["RAILS_ENV"] = "test"
 require File.expand_path(File.dirname(__FILE__) + "/../config/environment")
@@ -122,7 +124,7 @@ class ActiveSupport::TestCase
   end
 
   def self.ldap_configured?
-    @test_ldap = Net::LDAP.new(:host => '127.0.0.1', :port => 389)
+    @test_ldap = Net::LDAP.new(:host => $redmine_test_ldap_server, :port => 389)
     return @test_ldap.bind
   rescue Exception => e
     # LDAP is not listening
@@ -183,10 +185,16 @@ class ActiveSupport::TestCase
   # Asserts that a new record for the given class is created
   # and returns it
   def new_record(klass, &block)
-    assert_difference "#{klass}.count" do
+    new_records(klass, 1, &block).first
+  end
+
+  # Asserts that count new records for the given class are created
+  # and returns them as an array order by object id
+  def new_records(klass, count, &block)
+    assert_difference "#{klass}.count", count do
       yield
     end
-    klass.order(:id => :desc).first
+    klass.order(:id => :desc).limit(count).to_a.reverse
   end
 
   def assert_save(object)
@@ -269,13 +277,51 @@ module Redmine
     end
   end
 
+  class HelperTest < ActionView::TestCase
+    
+  end
+
+  class ControllerTest < ActionController::TestCase
+    # Returns the issues that are displayed in the list in the same order
+    def issues_in_list
+      ids = css_select('tr.issue td.id').map(&:text).map(&:to_i)
+      Issue.where(:id => ids).sort_by {|issue| ids.index(issue.id)}
+    end
+  
+    # Return the columns that are displayed in the list
+    def columns_in_issues_list
+      css_select('table.issues thead th:not(.checkbox)').map(&:text)
+    end
+  
+    # Verifies that the query filters match the expected filters
+    def assert_query_filters(expected_filters)
+      response.body =~ /initFilters\(\);\s*((addFilter\(.+\);\s*)*)/
+      filter_init = $1.to_s
+  
+      expected_filters.each do |field, operator, values|
+        s = "addFilter(#{field.to_json}, #{operator.to_json}, #{Array(values).to_json});"
+        assert_include s, filter_init
+      end
+      assert_equal expected_filters.size, filter_init.scan("addFilter").size, "filters counts don't match"
+    end
+
+    def process(method, path, parameters={}, session={}, flash={})
+      if parameters.key?(:params) || parameters.key?(:session)
+        raise ArgumentError if session.present?
+        super method, path, parameters[:params], parameters[:session], parameters.except(:params, :session)
+      else
+        super
+      end
+    end
+  end
+
   class IntegrationTest < ActionDispatch::IntegrationTest
     def log_user(login, password)
       User.anonymous
       get "/login"
       assert_equal nil, session[:user_id]
       assert_response :success
-      assert_template "account/login"
+
       post "/login", :username => login, :password => password
       assert_equal login, User.find(session[:user_id]).login
     end

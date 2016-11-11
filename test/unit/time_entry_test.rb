@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -122,7 +122,7 @@ class TimeEntryTest < ActiveSupport::TestCase
   def test_spent_on_with_time
     c = TimeEntry.new
     c.spent_on = Time.now
-    assert_equal Date.today, c.spent_on
+    assert_kind_of Date, c.spent_on
   end
 
   def test_validate_time_entry

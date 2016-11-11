@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -18,8 +18,8 @@
 class FilesController < ApplicationController
   menu_item :files
 
-  before_filter :find_project_by_project_id
-  before_filter :authorize
+  before_action :find_project_by_project_id
+  before_action :authorize
 
   helper :sort
   include SortHelper

@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -25,7 +25,7 @@ class ProjectsTest < Redmine::IntegrationTest
     log_user("admin", "admin")
     get "/admin/projects"
     assert_response :success
-    assert_template "admin/projects"
+
     post "/projects/1/archive"
     assert_redirected_to "/admin/projects"
     assert !Project.find(1).active?

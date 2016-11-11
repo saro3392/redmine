@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -47,20 +47,25 @@ class User < Principal
         :order => %w(lastname firstname id),
         :setting_order => 4
       },
-    :lastname_coma_firstname => {
-        :string => '#{lastname}, #{firstname}',
+    :lastnamefirstname => {
+        :string => '#{lastname}#{firstname}',
         :order => %w(lastname firstname id),
         :setting_order => 5
+      },
+    :lastname_comma_firstname => {
+        :string => '#{lastname}, #{firstname}',
+        :order => %w(lastname firstname id),
+        :setting_order => 6
       },
     :lastname => {
         :string => '#{lastname}',
         :order => %w(lastname id),
-        :setting_order => 6
+        :setting_order => 7
       },
     :username => {
         :string => '#{login}',
         :order => %w(login id),
-        :setting_order => 7
+        :setting_order => 8
       },
   }
 
@@ -92,8 +97,10 @@ class User < Principal
 
   attr_accessor :password, :password_confirmation, :generate_password
   attr_accessor :last_before_login_on
+  attr_accessor :remote_ip
+
   # Prevents unauthorized assignments
-  attr_protected :login, :admin, :password, :password_confirmation, :hashed_password
+  attr_protected :password, :password_confirmation, :hashed_password
 
   LOGIN_LENGTH_LIMIT = 60
   MAIL_LENGTH_LIMIT = 60
@@ -112,11 +119,14 @@ class User < Principal
     end
   end
 
+  self.valid_statuses = [STATUS_ACTIVE, STATUS_REGISTERED, STATUS_LOCKED]
+
   before_validation :instantiate_email_address
   before_create :set_mail_notification
   before_save   :generate_password_if_needed, :update_hashed_password
   before_destroy :remove_references_before_destroy
-  after_save :update_notified_project_ids, :destroy_tokens
+  after_save :update_notified_project_ids, :destroy_tokens, :deliver_security_notification
+  after_destroy :deliver_security_notification
 
   scope :in_group, lambda {|group|
     group_id = group.is_a?(Group) ? group.id : group.to_i
@@ -130,7 +140,7 @@ class User < Principal
   scope :having_mail, lambda {|arg|
     addresses = Array.wrap(arg).map {|a| a.to_s.downcase}
     if addresses.any?
-      joins(:email_addresses).where("LOWER(#{EmailAddress.table_name}.address) IN (?)", addresses).uniq
+      joins(:email_addresses).where("LOWER(#{EmailAddress.table_name}.address) IN (?)", addresses).distinct
     else
       none
     end
@@ -394,6 +404,26 @@ class User < Principal
     api_token.value
   end
 
+  # Generates a new session token and returns its value
+  def generate_session_token
+    token = Token.create!(:user_id => id, :action => 'session')
+    token.value
+  end
+
+  # Returns true if token is a valid session token for the user whose id is user_id
+  def self.verify_session_token(user_id, token)
+    return false if user_id.blank? || token.blank?
+
+    scope = Token.where(:user_id => user_id, :value => token.to_s, :action => 'session')
+    if Setting.session_lifetime?
+      scope = scope.where("created_on > ?", Setting.session_lifetime.to_i.minutes.ago)
+    end
+    if Setting.session_timeout?
+      scope = scope.where("updated_on > ?", Setting.session_timeout.to_i.minutes.ago)
+    end
+    scope.update_all(:updated_on => Time.now) == 1
+  end
+
   # Return an array of project ids for which the user has explicitly turned mail notifications on
   def notified_projects_ids
     @notified_projects_ids ||= memberships.select {|m| m.mail_notification?}.collect(&:project_id)
@@ -482,7 +512,7 @@ class User < Principal
     if time_zone.nil?
       Date.today
     else
-      Time.now.in_time_zone(time_zone).to_date
+      time_zone.today
     end
   end
 
@@ -524,7 +554,7 @@ class User < Principal
     # No role on archived projects
     return [] if project.nil? || project.archived?
     if membership = membership(project)
-      membership.roles.dup
+      membership.roles.to_a
     elsif project.is_public?
       project.override_roles(builtin_role)
     else
@@ -656,8 +686,7 @@ class User < Principal
       (!admin? || User.active.where("admin = ? AND id <> ?", true, id).exists?)
   end
 
-  safe_attributes 'login',
-    'firstname',
+  safe_attributes 'firstname',
     'lastname',
     'mail',
     'mail_notification',
@@ -667,10 +696,15 @@ class User < Principal
     'custom_fields',
     'identity_url'
 
+  safe_attributes 'login',
+    :if => lambda {|user, current_user| user.new_record?}
+
   safe_attributes 'status',
     'auth_source_id',
     'generate_password',
     'must_change_passwd',
+    'login',
+    'admin',
     :if => lambda {|user, current_user| current_user.admin?}
 
   safe_attributes 'group_ids',
@@ -765,8 +799,8 @@ class User < Principal
   # This helps to keep the account secure in case the associated email account
   # was compromised.
   def destroy_tokens
-    if hashed_password_changed?
-      tokens = ['recovery', 'autologin']
+    if hashed_password_changed? || (status_changed? && !active?)
+      tokens = ['recovery', 'autologin', 'session']
       Token.where(:user_id => id, :action => tokens).delete_all
     end
   end
@@ -791,11 +825,11 @@ class User < Principal
     Message.where(['author_id = ?', id]).update_all(['author_id = ?', substitute.id])
     News.where(['author_id = ?', id]).update_all(['author_id = ?', substitute.id])
     # Remove private queries and keep public ones
-    ::Query.delete_all ['user_id = ? AND visibility = ?', id, ::Query::VISIBILITY_PRIVATE]
+    ::Query.where('user_id = ? AND visibility = ?', id, ::Query::VISIBILITY_PRIVATE).delete_all
     ::Query.where(['user_id = ?', id]).update_all(['user_id = ?', substitute.id])
     TimeEntry.where(['user_id = ?', id]).update_all(['user_id = ?', substitute.id])
-    Token.delete_all ['user_id = ?', id]
-    Watcher.delete_all ['user_id = ?', id]
+    Token.where('user_id = ?', id).delete_all
+    Watcher.where('user_id = ?', id).delete_all
     WikiContent.where(['author_id = ?', id]).update_all(['author_id = ?', substitute.id])
     WikiContent::Version.where(['author_id = ?', id]).update_all(['author_id = ?', substitute.id])
   end
@@ -810,10 +844,42 @@ class User < Principal
     Redmine::Utils.random_hex(16)
   end
 
+  # Send a security notification to all admins if the user has gained/lost admin privileges
+  def deliver_security_notification
+    options = {
+      field: :field_admin,
+      value: login,
+      title: :label_user_plural,
+      url: {controller: 'users', action: 'index'}
+    }
+
+    deliver = false
+    if (admin? && id_changed? && active?) ||    # newly created admin
+       (admin? && admin_changed? && active?) || # regular user became admin
+       (admin? && status_changed? && active?)   # locked admin became active again
+
+       deliver = true
+       options[:message] = :mail_body_security_notification_add
+
+    elsif (admin? && destroyed? && active?) ||      # active admin user was deleted
+          (!admin? && admin_changed? && active?) || # admin is no longer admin
+          (admin? && status_changed? && !active?)   # admin was locked
+
+          deliver = true
+          options[:message] = :mail_body_security_notification_remove
+    end
+
+    if deliver
+      users = User.active.where(admin: true).to_a
+      Mailer.security_notification(users, options).deliver
+    end
+  end
 end
 
 class AnonymousUser < User
   validate :validate_anonymous_uniqueness, :on => :create
+
+  self.valid_statuses = [STATUS_ANONYMOUS]
 
   def validate_anonymous_uniqueness
     # There should be only one AnonymousUser in the database

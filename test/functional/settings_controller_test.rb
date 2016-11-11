@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -17,7 +17,7 @@
 
 require File.expand_path('../../test_helper', __FILE__)
 
-class SettingsControllerTest < ActionController::TestCase
+class SettingsControllerTest < Redmine::ControllerTest
   fixtures :projects, :trackers, :issue_statuses, :issues,
            :users
 
@@ -26,16 +26,21 @@ class SettingsControllerTest < ActionController::TestCase
     @request.session[:user_id] = 1 # admin
   end
 
+  def teardown
+    Setting.delete_all
+    Setting.clear_cache
+  end
+
   def test_index
     get :index
     assert_response :success
-    assert_template 'edit'
+
+    assert_select 'input[name=?][value=?]', 'settings[app_title]', Setting.app_title
   end
 
   def test_get_edit
     get :edit
     assert_response :success
-    assert_template 'edit'
 
     assert_select 'input[name=?][value=""]', 'settings[enabled_scm][]'
   end
@@ -68,17 +73,19 @@ class SettingsControllerTest < ActionController::TestCase
   end
 
   def test_post_edit_notifications
-    post :edit, :settings => {:mail_from => 'functional@test.foo',
-                              :bcc_recipients  => '0',
-                              :notified_events => %w(issue_added issue_updated news_added),
-                              :emails_footer => 'Test footer'
-                              }
+    post :edit, :params => {
+      :settings => {
+        :mail_from => 'functional@test.foo',
+        :bcc_recipients  => '0',
+        :notified_events => %w(issue_added issue_updated news_added),
+        :emails_footer => 'Test footer'
+      }
+    }
     assert_redirected_to '/settings'
     assert_equal 'functional@test.foo', Setting.mail_from
     assert !Setting.bcc_recipients?
     assert_equal %w(issue_added issue_updated news_added), Setting.notified_events
     assert_equal 'Test footer', Setting.emails_footer
-    Setting.clear_cache
   end
 
   def test_edit_commit_update_keywords
@@ -121,12 +128,14 @@ class SettingsControllerTest < ActionController::TestCase
   end
 
   def test_post_edit_commit_update_keywords
-    post :edit, :settings => {
-      :commit_update_keywords => {
-        :keywords => ["resolves", "closes"],
-        :status_id => ["3", "5"],
-        :done_ratio => ["", "100"],
-        :if_tracker_id => ["", "2"]
+    post :edit, :params => {
+      :settings => {
+        :commit_update_keywords => {
+          :keywords => ["resolves", "closes"],
+          :status_id => ["3", "5"],
+          :done_ratio => ["", "100"],
+          :if_tracker_id => ["", "2"]
+        }
       }
     }
     assert_redirected_to '/settings'
@@ -136,6 +145,56 @@ class SettingsControllerTest < ActionController::TestCase
     ], Setting.commit_update_keywords)
   end
 
+  def test_post_edit_with_invalid_setting_should_not_error
+    post :edit, :params => {
+      :settings => {
+        :invalid_setting => '1'
+      }
+    }
+    assert_redirected_to '/settings'
+  end
+
+  def test_post_edit_should_send_security_notification_for_notified_settings
+    ActionMailer::Base.deliveries.clear
+    post :edit, :params => {
+      :settings => {
+        :login_required => 1
+      }
+    }
+    assert_not_nil (mail = ActionMailer::Base.deliveries.last)
+    assert_mail_body_match '0.0.0.0', mail
+    assert_mail_body_match I18n.t(:setting_login_required), mail
+    assert_select_email do
+      assert_select 'a[href^=?]', 'http://localhost:3000/settings'
+    end
+    # All admins should receive this
+    recipients = [mail.bcc, mail.cc].flatten
+    User.active.where(admin: true).each do |admin|
+      assert_include admin.mail, recipients
+    end
+  end
+
+  def test_post_edit_should_not_send_security_notification_for_non_notified_settings
+    ActionMailer::Base.deliveries.clear
+    post :edit, :params => {
+      :settings => {
+        :app_title => 'MineRed'
+      }
+    }
+    assert_nil (mail = ActionMailer::Base.deliveries.last)
+  end
+
+  def test_post_edit_should_not_send_security_notification_for_unchanged_settings
+    ActionMailer::Base.deliveries.clear
+    post :edit, :params => {
+      :settings => {
+        :login_required => 0
+      }
+    }
+    assert_nil (mail = ActionMailer::Base.deliveries.last)
+  end
+
+
   def test_get_plugin_settings
     ActionController::Base.append_view_path(File.join(Rails.root, "test/fixtures/plugins"))
     Redmine::Plugin.register :foo do
@@ -143,9 +202,9 @@ class SettingsControllerTest < ActionController::TestCase
     end
     Setting.plugin_foo = {'sample_setting' => 'Plugin setting value'}
 
-    get :plugin, :id => 'foo'
+    get :plugin, :params => {:id => 'foo'}
     assert_response :success
-    assert_template 'plugin'
+
     assert_select 'form[action="/settings/plugin/foo"]' do
       assert_select 'input[name=?][value=?]', 'settings[sample_setting]', 'Plugin setting value'
     end
@@ -154,14 +213,14 @@ class SettingsControllerTest < ActionController::TestCase
   end
 
   def test_get_invalid_plugin_settings
-    get :plugin, :id => 'none'
+    get :plugin, :params => {:id => 'none'}
     assert_response 404
   end
 
   def test_get_non_configurable_plugin_settings
     Redmine::Plugin.register(:foo) {}
 
-    get :plugin, :id => 'foo'
+    get :plugin, :params => {:id => 'foo'}
     assert_response 404
 
   ensure
@@ -174,7 +233,10 @@ class SettingsControllerTest < ActionController::TestCase
         :default => {'sample_setting' => 'Plugin setting value'}
     end
 
-    post :plugin, :id => 'foo', :settings => {'sample_setting' => 'Value'}
+    post :plugin, :params => {
+      :id => 'foo',
+      :settings => {'sample_setting' => 'Value'}
+    }
     assert_redirected_to '/settings/plugin/foo'
 
     assert_equal({'sample_setting' => 'Value'}, Setting.plugin_foo)
@@ -183,7 +245,10 @@ class SettingsControllerTest < ActionController::TestCase
   def test_post_non_configurable_plugin_settings
     Redmine::Plugin.register(:foo) {}
 
-    post :plugin, :id => 'foo', :settings => {'sample_setting' => 'Value'}
+    post :plugin, :params => {
+      :id => 'foo',
+      :settings => {'sample_setting' => 'Value'}
+    }
     assert_response 404
 
   ensure

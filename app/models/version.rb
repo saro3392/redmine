@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -17,7 +17,11 @@
 
 class Version < ActiveRecord::Base
   include Redmine::SafeAttributes
+
   after_update :update_issues_from_sharing_change
+  after_save :update_default_project_version
+  before_destroy :nullify_projects_default_version
+
   belongs_to :project
   has_many :fixed_issues, :class_name => 'Issue', :foreign_key => 'fixed_version_id', :dependent => :nullify
   acts_as_customizable
@@ -38,7 +42,18 @@ class Version < ActiveRecord::Base
   attr_protected :id
 
   scope :named, lambda {|arg| where("LOWER(#{table_name}.name) = LOWER(?)", arg.to_s.strip)}
+  scope :like, lambda {|arg|
+    if arg.present?
+      pattern = "%#{arg.to_s.strip}%"
+      where("LOWER(#{Version.table_name}.name) LIKE :p", :p => pattern)
+    end
+  }
   scope :open, lambda { where(:status => 'open') }
+  scope :status, lambda {|status|
+    if status.present?
+      where(:status => status.to_s)
+    end
+  }
   scope :visible, lambda {|*args|
     joins(:project).
     where(Project.allowed_to_condition(args.first || User.current, :view_issues))
@@ -51,6 +66,7 @@ class Version < ActiveRecord::Base
     'wiki_page_title',
     'status',
     'sharing',
+    'default_project_version',
     'custom_field_values',
     'custom_fields'
 
@@ -66,6 +82,12 @@ class Version < ActiveRecord::Base
 
   def attachments_deletable?(usr=User.current)
     project.present? && project.attachments_deletable?(usr)
+  end
+
+  alias :base_reload :reload
+  def reload(*args)
+    @default_project_version = nil
+    base_reload(*args)
   end
 
   def start_date
@@ -99,9 +121,9 @@ class Version < ActiveRecord::Base
     status == 'open'
   end
 
-  # Returns true if the version is completed: due date reached and no open issues
+  # Returns true if the version is completed: closed or due date reached and no open issues
   def completed?
-    effective_date && (effective_date < Date.today) && (open_issues_count == 0)
+    closed? || (effective_date && (effective_date < User.current.today) && (open_issues_count == 0))
   end
 
   def behind_schedule?
@@ -109,7 +131,7 @@ class Version < ActiveRecord::Base
       return false
     elsif due_date && start_date
       done_date = start_date + ((due_date - start_date+1)* completed_percent/100).floor
-      return done_date <= Date.today
+      return done_date <= User.current.today
     else
       false # No issues so it's not late
     end
@@ -138,7 +160,7 @@ class Version < ActiveRecord::Base
 
   # Returns true if the version is overdue: due date reached and some open issues
   def overdue?
-    effective_date && (effective_date < Date.today) && (open_issues_count > 0)
+    effective_date && (effective_date < User.current.today) && (open_issues_count > 0)
   end
 
   # Returns assigned issues count
@@ -194,6 +216,24 @@ class Version < ActiveRecord::Base
     end
   end
 
+  # Sort versions by status (open, locked then closed versions)
+  def self.sort_by_status(versions)
+    versions.sort do |a, b|
+      if a.status == b.status
+        a <=> b
+      else
+        b.status <=> a.status
+      end
+    end
+  end
+
+  def css_classes
+    [
+      completed? ? 'version-completed' : 'version-incompleted',
+      "version-#{status}"
+    ].join(' ')
+  end
+
   def self.fields_for_order_statement(table=nil)
     table ||= table_name
     ["(CASE WHEN #{table}.effective_date IS NULL THEN 1 ELSE 0 END)", "#{table}.effective_date", "#{table}.name", "#{table}.id"]
@@ -231,6 +271,18 @@ class Version < ActiveRecord::Base
     fixed_issues.empty? && !referenced_by_a_custom_field?
   end
 
+  def default_project_version
+    if @default_project_version.nil?
+      project.present? && project.default_version == self
+    else
+      @default_project_version
+    end
+  end
+
+  def default_project_version=(arg)
+    @default_project_version = (arg == '1' || arg == true) 
+  end
+
   private
 
   def load_issue_counts
@@ -256,6 +308,12 @@ class Version < ActiveRecord::Base
           VERSION_SHARINGS.index(sharing_was) > VERSION_SHARINGS.index(sharing)
         Issue.update_versions_from_sharing_change self
       end
+    end
+  end
+
+  def update_default_project_version
+    if @default_project_version && project.present?
+      project.update_columns :default_version_id => id
     end
   end
 
@@ -296,5 +354,9 @@ class Version < ActiveRecord::Base
   def referenced_by_a_custom_field?
     CustomValue.joins(:custom_field).
       where(:value => id.to_s, :custom_fields => {:field_format => 'version'}).any?
+  end
+
+  def nullify_projects_default_version
+    Project.where(:default_version_id => id).update_all(:default_version_id => nil)
   end
 end

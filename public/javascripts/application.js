@@ -1,5 +1,5 @@
 /* Redmine - project management software
-   Copyright (C) 2006-2015  Jean-Philippe Lang */
+   Copyright (C) 2006-2016  Jean-Philippe Lang */
 
 function checkAll(id, checked) {
   $('#'+id).find('input[type=checkbox]:enabled').prop('checked', checked);
@@ -175,6 +175,11 @@ function buildFilterRow(field, operator, values) {
       if ($.isArray(filterValue)) {
         option.val(filterValue[1]).text(filterValue[0]);
         if ($.inArray(filterValue[1], values) > -1) {option.attr('selected', true);}
+        if (filterValue.length == 3) {
+          var optgroup = select.find('optgroup').filter(function(){return $(this).attr('label') == filterValue[2]});
+          if (!optgroup.length) {optgroup = $('<optgroup>').attr('label', filterValue[2]);}
+          option = optgroup.append(option);
+        }
       } else {
         option.val(filterValue).text(filterValue);
         if ($.inArray(filterValue, values) > -1) {option.attr('selected', true);}
@@ -185,12 +190,12 @@ function buildFilterRow(field, operator, values) {
   case "date":
   case "date_past":
     tr.find('td.values').append(
-      '<span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_1" size="10" class="value date_value" /></span>' +
-      ' <span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_2" size="10" class="value date_value" /></span>' +
+      '<span style="display:none;"><input type="date" name="v['+field+'][]" id="values_'+fieldId+'_1" size="10" class="value date_value" /></span>' +
+      ' <span style="display:none;"><input type="date" name="v['+field+'][]" id="values_'+fieldId+'_2" size="10" class="value date_value" /></span>' +
       ' <span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'" size="3" class="value" /> '+labelDayPlural+'</span>'
     );
-    $('#values_'+fieldId+'_1').val(values[0]).datepicker(datepickerOptions);
-    $('#values_'+fieldId+'_2').val(values[1]).datepicker(datepickerOptions);
+    $('#values_'+fieldId+'_1').val(values[0]).datepickerFallback(datepickerOptions);
+    $('#values_'+fieldId+'_2').val(values[1]).datepickerFallback(datepickerOptions);
     $('#values_'+fieldId).val(values[0]);
     break;
   case "string":
@@ -219,8 +224,8 @@ function buildFilterRow(field, operator, values) {
   case "float":
   case "tree":
     tr.find('td.values').append(
-      '<span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_1" size="6" class="value" /></span>' +
-      ' <span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_2" size="6" class="value" /></span>'
+      '<span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_1" size="14" class="value" /></span>' +
+      ' <span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_2" size="14" class="value" /></span>'
     );
     $('#values_'+fieldId+'_1').val(values[0]);
     $('#values_'+fieldId+'_2').val(values[1]);
@@ -275,6 +280,8 @@ function toggleOperator(field) {
     case "y":
     case "o":
     case "c":
+    case "*o":
+    case "!o":
       enableValues(field, []);
       break;
     case "><":
@@ -315,8 +322,8 @@ function toggleMultiSelect(el) {
 }
 
 function showTab(name, url) {
-  $('div#content .tab-content').hide();
-  $('div.tabs a').removeClass('selected');
+  $('#tab-content-' + name).parent().find('.tab-content').hide();
+  $('#tab-content-' + name).parent().find('div.tabs a').removeClass('selected');
   $('#tab-content-' + name).show();
   $('#tab-' + name).addClass('selected');
   //replaces current URL with the "href" attribute of the current link
@@ -329,16 +336,22 @@ function showTab(name, url) {
 
 function moveTabRight(el) {
   var lis = $(el).parents('div.tabs').first().find('ul').children();
+  var bw = $(el).parents('div.tabs-buttons').outerWidth(true);
   var tabsWidth = 0;
   var i = 0;
   lis.each(function() {
     if ($(this).is(':visible')) {
-      tabsWidth += $(this).width() + 6;
+      tabsWidth += $(this).outerWidth(true);
     }
   });
-  if (tabsWidth < $(el).parents('div.tabs').first().width() - 60) { return; }
+  if (tabsWidth < $(el).parents('div.tabs').first().width() - bw) { return; }
+  $(el).siblings('.tab-left').removeClass('disabled');
   while (i<lis.length && !lis.eq(i).is(':visible')) { i++; }
+  var w = lis.eq(i).width();
   lis.eq(i).hide();
+  if (tabsWidth - w < $(el).parents('div.tabs').first().width() - bw) {
+    $(el).addClass('disabled');
+  }
 }
 
 function moveTabLeft(el) {
@@ -347,25 +360,35 @@ function moveTabLeft(el) {
   while (i < lis.length && !lis.eq(i).is(':visible')) { i++; }
   if (i > 0) {
     lis.eq(i-1).show();
+    $(el).siblings('.tab-right').removeClass('disabled');
+  }
+  if (i <= 1) {
+    $(el).addClass('disabled');
   }
 }
 
 function displayTabsButtons() {
   var lis;
-  var tabsWidth = 0;
+  var tabsWidth;
   var el;
+  var numHidden;
   $('div.tabs').each(function() {
     el = $(this);
     lis = el.find('ul').children();
+    tabsWidth = 0;
+    numHidden = 0;
     lis.each(function(){
       if ($(this).is(':visible')) {
-        tabsWidth += $(this).width() + 6;
+        tabsWidth += $(this).outerWidth(true);
+      } else {
+        numHidden++;
       }
     });
-    if ((tabsWidth < el.width() - 60) && (lis.first().is(':visible'))) {
+    var bw = $(el).parents('div.tabs-buttons').outerWidth(true);
+    if ((tabsWidth < el.width() - bw) && (lis.length === 0 || lis.first().is(':visible'))) {
       el.find('div.tabs-buttons').hide();
     } else {
-      el.find('div.tabs-buttons').show();
+      el.find('div.tabs-buttons').show().children('button.tab-left').toggleClass('disabled', numHidden == 0);
     }
   });
 }
@@ -472,10 +495,13 @@ function randomKey(size) {
   return key;
 }
 
-function updateIssueFrom(url) {
+function updateIssueFrom(url, el) {
   $('#all_attributes input, #all_attributes textarea, #all_attributes select').each(function(){
     $(this).data('valuebeforeupdate', $(this).val());
   });
+  if (el) {
+    $("#form_update_triggered_by").val($(el).attr('id'));
+  }
   return $.ajax({
     url: url,
     type: 'post',
@@ -508,6 +534,7 @@ function observeAutocompleteField(fieldId, url, options) {
     $('#'+fieldId).autocomplete($.extend({
       source: url,
       minLength: 2,
+      position: {collision: "flipfit"},
       search: function(){$('#'+fieldId).addClass('ajax-loading');},
       response: function(){$('#'+fieldId).removeClass('ajax-loading');}
     }, options));
@@ -555,12 +582,61 @@ function beforeShowDatePicker(input, inst) {
       break;
     case "issue_due_date" :
       if ($("#issue_start_date").size() > 0) {
-        default_date = $("#issue_start_date").val();
+        var start_date = $("#issue_start_date").val();
+        if (start_date != "") {
+          start_date = new Date(Date.parse(start_date));
+          if (start_date > new Date()) {
+            default_date = $("#issue_start_date").val();
+          }
+        }
       }
       break;
   }
-  $(input).datepicker("option", "defaultDate", default_date);
+  $(input).datepickerFallback("option", "defaultDate", default_date);
 }
+
+(function($){
+  $.fn.positionedItems = function(sortableOptions, options){
+    var settings = $.extend({
+      firstPosition: 1
+    }, options );
+
+    return this.sortable($.extend({
+      handle: ".sort-handle",
+      helper: function(event, ui){
+        ui.children('td').each(function(){
+          $(this).width($(this).width());
+        });
+        return ui;
+      },
+      update: function(event, ui) {
+        var sortable = $(this);
+        var handle = ui.item.find(".sort-handle").addClass("ajax-loading");
+        var url = handle.data("reorder-url");
+        var param = handle.data("reorder-param");
+        var data = {};
+        data[param] = {position: ui.item.index() + settings['firstPosition']};
+        $.ajax({
+          url: url,
+          type: 'put',
+          dataType: 'script',
+          data: data,
+          success: function(data){
+            sortable.children(":even").removeClass("even").addClass("odd");
+            sortable.children(":odd").removeClass("odd").addClass("even");
+          },
+          error: function(jqXHR, textStatus, errorThrown){
+            alert(jqXHR.status);
+            sortable.sortable("cancel");
+          },
+          complete: function(jqXHR, textStatus, errorThrown){
+            handle.removeClass("ajax-loading");
+          }
+        });
+      },
+    }, sortableOptions));
+  }
+}( jQuery ));
 
 function initMyPageSortable(list, url) {
   $('#list-'+list).sortable({
@@ -608,6 +684,13 @@ function setupAjaxIndicator() {
   });
 }
 
+function setupTabs() {
+  if($('.tabs').length > 0) {
+    displayTabsButtons();
+    $(window).resize(displayTabsButtons);
+  }
+}
+
 function hideOnLoad() {
   $('.hol').hide();
 }
@@ -641,16 +724,65 @@ function toggleDisabledOnChange() {
   var checked = $(this).is(':checked');
   $($(this).data('disables')).attr('disabled', checked);
   $($(this).data('enables')).attr('disabled', !checked);
+  $($(this).data('shows')).toggle(checked);
 }
 function toggleDisabledInit() {
-  $('input[data-disables], input[data-enables]').each(toggleDisabledOnChange);
+  $('input[data-disables], input[data-enables], input[data-shows]').each(toggleDisabledOnChange);
 }
+
+function toggleNewObjectDropdown() {
+  var dropdown = $('#new-object + ul.menu-children');
+  if(dropdown.hasClass('visible')){
+    dropdown.removeClass('visible');
+  }else{
+    dropdown.addClass('visible');
+  }
+}
+
+(function ( $ ) {
+
+  // detect if native date input is supported
+  var nativeDateInputSupported = true;
+
+  var input = document.createElement('input');
+  input.setAttribute('type','date');
+  if (input.type === 'text') {
+    nativeDateInputSupported = false;
+  }
+
+  var notADateValue = 'not-a-date';
+  input.setAttribute('value', notADateValue);
+  if (input.value === notADateValue) {
+    nativeDateInputSupported = false;
+  }
+
+  $.fn.datepickerFallback = function( options ) {
+    if (nativeDateInputSupported) {
+      return this;
+    } else {
+      return this.datepicker( options );
+    }
+  };
+}( jQuery ));
+
 $(document).ready(function(){
-  $('#content').on('change', 'input[data-disables], input[data-enables]', toggleDisabledOnChange);
+  $('#content').on('change', 'input[data-disables], input[data-enables], input[data-shows]', toggleDisabledOnChange);
   toggleDisabledInit();
 });
+
+function keepAnchorOnSignIn(form){
+  var hash = decodeURIComponent(self.document.location.hash);
+  if (hash) {
+    if (hash.indexOf("#") === -1) {
+      hash = "#" + hash;
+    }
+    form.action = form.action + hash;
+  }
+  return true;
+}
 
 $(document).ready(setupAjaxIndicator);
 $(document).ready(hideOnLoad);
 $(document).ready(addFormObserversForDoubleSubmit);
 $(document).ready(defaultFocus);
+$(document).ready(setupTabs);

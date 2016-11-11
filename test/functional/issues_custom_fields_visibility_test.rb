@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -17,10 +17,10 @@
 
 require File.expand_path('../../test_helper', __FILE__)
 
-class IssuesCustomFieldsVisibilityTest < ActionController::TestCase
+class IssuesCustomFieldsVisibilityTest < Redmine::ControllerTest
   tests IssuesController
   fixtures :projects,
-           :users, :email_addresses,
+           :users, :email_addresses, :user_preferences,
            :roles,
            :members,
            :member_roles,
@@ -68,9 +68,9 @@ class IssuesCustomFieldsVisibilityTest < ActionController::TestCase
       get :show, :id => @issue.id
       @fields.each_with_index do |field, i|
         if fields.include?(field)
-          assert_select 'td', {:text => "Value#{i}", :count => 1}, "User #{user.id} was not able to view #{field.name}"
+          assert_select '.value', {:text => "Value#{i}", :count => 1}, "User #{user.id} was not able to view #{field.name}"
         else
-          assert_select 'td', {:text => "Value#{i}", :count => 0}, "User #{user.id} was able to view #{field.name}"
+          assert_select '.value', {:text => "Value#{i}", :count => 0}, "User #{user.id} was able to view #{field.name}"
         end
       end
     end
@@ -213,14 +213,14 @@ class IssuesCustomFieldsVisibilityTest < ActionController::TestCase
 
     get :index, :sort => "cf_#{@field2.id}"
     # ValueB is not visible to user and ignored while sorting
-    assert_equal %w(ValueB ValueA ValueC), assigns(:issues).map{|i| i.custom_field_value(@field2)}
+    assert_equal %w(ValueB ValueA ValueC), issues_in_list.map{|i| i.custom_field_value(@field2)}
 
     get :index, :set_filter => '1', "cf_#{@field2.id}" => '*'
-    assert_equal %w(ValueA ValueC), assigns(:issues).map{|i| i.custom_field_value(@field2)}
+    assert_equal %w(ValueA ValueC), issues_in_list.map{|i| i.custom_field_value(@field2)}
 
     CustomField.update_all(:field_format => 'list')
     get :index, :group => "cf_#{@field2.id}"
-    assert_equal %w(ValueA ValueC), assigns(:issues).map{|i| i.custom_field_value(@field2)}
+    assert_equal %w(ValueA ValueC), issues_in_list.map{|i| i.custom_field_value(@field2)}
   end
 
   def test_create_should_send_notifications_according_custom_fields_visibility

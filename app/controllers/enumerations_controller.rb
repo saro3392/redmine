@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -18,10 +18,10 @@
 class EnumerationsController < ApplicationController
   layout 'admin'
 
-  before_filter :require_admin, :except => :index
-  before_filter :require_admin_or_api_request, :only => :index
-  before_filter :build_new_enumeration, :only => [:new, :create]
-  before_filter :find_enumeration, :only => [:edit, :update, :destroy]
+  before_action :require_admin, :except => :index
+  before_action :require_admin_or_api_request, :only => :index
+  before_action :build_new_enumeration, :only => [:new, :create]
+  before_action :find_enumeration, :only => [:edit, :update, :destroy]
   accept_api_auth :index
 
   helper :custom_fields
@@ -57,10 +57,18 @@ class EnumerationsController < ApplicationController
 
   def update
     if @enumeration.update_attributes(params[:enumeration])
-      flash[:notice] = l(:notice_successful_update)
-      redirect_to enumerations_path
+      respond_to do |format|
+        format.html {
+          flash[:notice] = l(:notice_successful_update)
+          redirect_to enumerations_path
+        }
+        format.js { head 200 }
+      end
     else
-      render :action => 'edit'
+      respond_to do |format|
+        format.html { render :action => 'edit' }
+        format.js { head 422 }
+      end
     end
   end
 

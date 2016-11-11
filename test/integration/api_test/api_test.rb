@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -43,5 +43,12 @@ class Redmine::ApiTest::ApiTest < Redmine::ApiTest::Base
   def test_xml_datetime_format
     get '/users/1.xml', {}, credentials('admin')
     assert_include '<created_on>2006-07-19T17:12:21Z</created_on>', response.body
+  end
+
+  def test_head_response_should_have_empty_body
+    put '/users/7.xml', {:user => {:login => 'foo'}}, credentials('admin')
+
+    assert_response :ok
+    assert_equal '', response.body
   end
 end

@@ -22,8 +22,9 @@
 <% end %>
 &nbsp;
 
+<% if @users.any? %>
 <div class="autoscroll">
-<table class="list">
+<table class="list users">
   <thead><tr>
   <%= sort_header_tag('login', :caption => l(:field_login)) %>
   <%= sort_header_tag('firstname', :caption => l(:field_firstname)) %>
@@ -53,6 +54,9 @@
   </tbody>
 </table>
 </div>
-<p class="pagination"><%= pagination_links_full @user_pages, @user_count %></p>
+<span class="pagination"><%= pagination_links_full @user_pages, @user_count %></span>
+<% else %>
+<p class="nodata"><%= l(:label_no_data) %></p>
+<% end %>
 
 <% html_title(l(:label_user_plural)) -%>

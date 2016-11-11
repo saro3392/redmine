@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -19,6 +19,7 @@ require "digest/md5"
 require "fileutils"
 
 class Attachment < ActiveRecord::Base
+  include Redmine::SafeAttributes
   belongs_to :container, :polymorphic => true
   belongs_to :author, :class_name => "User"
 
@@ -26,7 +27,7 @@ class Attachment < ActiveRecord::Base
   validates_length_of :filename, :maximum => 255
   validates_length_of :disk_filename, :maximum => 255
   validates_length_of :description, :maximum => 255
-  validate :validate_max_file_size
+  validate :validate_max_file_size, :validate_file_extension
   attr_protected :id
 
   acts_as_event :title => :filename,
@@ -53,7 +54,10 @@ class Attachment < ActiveRecord::Base
   @@thumbnails_storage_path = File.join(Rails.root, "tmp", "thumbnails")
 
   before_create :files_to_final_location
-  after_destroy :delete_from_disk
+  after_rollback :delete_from_disk, :on => :create
+  after_commit :delete_from_disk, :on => :destroy
+
+  safe_attributes 'filename', 'content_type', 'description'
 
   # Returns an unsaved copy of the attachment
   def copy(attributes=nil)
@@ -66,6 +70,15 @@ class Attachment < ActiveRecord::Base
   def validate_max_file_size
     if @temp_file && self.filesize > Setting.attachment_max_size.to_i.kilobytes
       errors.add(:base, l(:error_attachment_too_big, :max_size => Setting.attachment_max_size.to_i.kilobytes))
+    end
+  end
+
+  def validate_file_extension
+    if @temp_file
+      extension = File.extname(filename)
+      unless self.class.valid_extension?(extension)
+        errors.add(:base, l(:error_attachment_extension_not_allowed, :extension => extension))
+      end
     end
   end
 
@@ -227,8 +240,16 @@ class Attachment < ActiveRecord::Base
     Redmine::MimeType.is_type?('text', filename)
   end
 
+  def is_image?
+    Redmine::MimeType.is_type?('image', filename)
+  end
+
   def is_diff?
     self.filename =~ /\.(patch|diff)$/i
+  end
+
+  def is_pdf?
+    Redmine::MimeType.of(filename) == "application/pdf"
   end
 
   # Returns true if the file is readable
@@ -331,6 +352,37 @@ class Attachment < ActiveRecord::Base
     Attachment.where("disk_directory IS NULL OR disk_directory = ''").find_each do |attachment|
       attachment.move_to_target_directory!
     end
+  end
+
+  # Returns true if the extension is allowed regarding allowed/denied
+  # extensions defined in application settings, otherwise false
+  def self.valid_extension?(extension)
+    denied, allowed = [:attachment_extensions_denied, :attachment_extensions_allowed].map do |setting|
+      Setting.send(setting)
+    end
+    if denied.present? && extension_in?(extension, denied)
+      return false
+    end
+    if allowed.present? && !extension_in?(extension, allowed)
+      return false
+    end
+    true
+  end
+
+  # Returns true if extension belongs to extensions list.
+  def self.extension_in?(extension, extensions)
+    extension = extension.downcase.sub(/\A\.+/, '')
+
+    unless extensions.is_a?(Array)
+      extensions = extensions.to_s.split(",").map(&:strip)
+    end
+    extensions = extensions.map {|s| s.downcase.sub(/\A\.+/, '')}.reject(&:blank?)
+    extensions.include?(extension)
+  end
+
+  # Returns true if attachment's extension belongs to extensions list.
+  def extension_in?(extensions)
+    self.class.extension_in?(File.extname(filename), extensions)
   end
 
   private

@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -17,7 +17,7 @@
 
 require File.expand_path('../../test_helper', __FILE__)
 
-class MyControllerTest < ActionController::TestCase
+class MyControllerTest < Redmine::ControllerTest
   fixtures :users, :email_addresses, :user_preferences, :roles, :projects, :members, :member_roles,
   :issues, :issue_statuses, :trackers, :enumerations, :custom_fields, :auth_sources
 
@@ -28,13 +28,13 @@ class MyControllerTest < ActionController::TestCase
   def test_index
     get :index
     assert_response :success
-    assert_template 'page'
+    assert_select 'h2', 'My page'
   end
 
   def test_page
     get :page
     assert_response :success
-    assert_template 'page'
+    assert_select 'h2', 'My page'
   end
 
   def test_page_with_timelog_block
@@ -52,7 +52,7 @@ class MyControllerTest < ActionController::TestCase
   end
 
   def test_page_with_all_blocks
-    blocks = MyController::BLOCKS.keys
+    blocks = Redmine::MyPage.blocks.keys
     preferences = User.find(2).pref
     preferences[:my_page_layout] = {'top' => blocks}
     preferences.save!
@@ -65,9 +65,6 @@ class MyControllerTest < ActionController::TestCase
   def test_my_account_should_show_editable_custom_fields
     get :account
     assert_response :success
-    assert_template 'account'
-    assert_equal User.find(2), assigns(:user)
-
     assert_select 'input[name=?]', 'user[custom_field_values][4]'
   end
 
@@ -76,9 +73,6 @@ class MyControllerTest < ActionController::TestCase
 
     get :account
     assert_response :success
-    assert_template 'account'
-    assert_equal User.find(2), assigns(:user)
-
     assert_select 'input[name=?]', 'user[custom_field_values][4]', 0
   end
 
@@ -108,13 +102,30 @@ class MyControllerTest < ActionController::TestCase
 
     assert_redirected_to '/my/account'
     user = User.find(2)
-    assert_equal user, assigns(:user)
     assert_equal "Joe", user.firstname
     assert_equal "jsmith", user.login
     assert_equal "0100562500", user.custom_value_for(4).value
     # ignored
     assert !user.admin?
     assert user.groups.empty?
+  end
+
+  def test_update_account_should_send_security_notification
+    ActionMailer::Base.deliveries.clear
+    post :account,
+      :user => {
+        :mail => 'foobar@example.com'
+      }
+
+    assert_not_nil (mail = ActionMailer::Base.deliveries.last)
+    assert_mail_body_match '0.0.0.0', mail
+    assert_mail_body_match I18n.t(:mail_body_security_notification_change_to, field: I18n.t(:field_mail), value: 'foobar@example.com'), mail
+    assert_select_email do
+      assert_select 'a[href^=?]', 'http://localhost:3000/my/account', :text => 'My account'
+    end
+    # The old email address should be notified about the change for security purposes
+    assert [mail.bcc, mail.cc].flatten.include?(User.find(2).mail)
+    assert [mail.bcc, mail.cc].flatten.include?('foobar@example.com')
   end
 
   def test_my_account_should_show_destroy_link
@@ -125,7 +136,6 @@ class MyControllerTest < ActionController::TestCase
   def test_get_destroy_should_display_the_destroy_confirmation
     get :destroy
     assert_response :success
-    assert_template 'destroy'
     assert_select 'form[action="/my/account/destroy"]' do
       assert_select 'input[name=confirm]'
     end
@@ -136,7 +146,6 @@ class MyControllerTest < ActionController::TestCase
       post :destroy
     end
     assert_response :success
-    assert_template 'destroy'
   end
 
   def test_post_destroy_without_confirmation_should_destroy_account
@@ -159,25 +168,12 @@ class MyControllerTest < ActionController::TestCase
   def test_change_password
     get :password
     assert_response :success
-    assert_template 'password'
+    assert_select 'input[type=password][name=password]'
+    assert_select 'input[type=password][name=new_password]'
+    assert_select 'input[type=password][name=new_password_confirmation]'
+  end
 
-    # non matching password confirmation
-    post :password, :password => 'jsmith',
-                    :new_password => 'secret123',
-                    :new_password_confirmation => 'secret1234'
-    assert_response :success
-    assert_template 'password'
-    assert_select_error /Password doesn.*t match confirmation/
-
-    # wrong password
-    post :password, :password => 'wrongpassword',
-                    :new_password => 'secret123',
-                    :new_password_confirmation => 'secret123'
-    assert_response :success
-    assert_template 'password'
-    assert_equal 'Wrong password', flash[:error]
-
-    # good password
+  def test_update_password
     post :password, :password => 'jsmith',
                     :new_password => 'secret123',
                     :new_password_confirmation => 'secret123'
@@ -185,16 +181,23 @@ class MyControllerTest < ActionController::TestCase
     assert User.try_to_login('jsmith', 'secret123')
   end
 
-  def test_change_password_kills_other_sessions
-    @request.session[:ctime] = (Time.now - 30.minutes).utc.to_i
+  def test_update_password_with_non_matching_confirmation
+    post :password, :password => 'jsmith',
+                    :new_password => 'secret123',
+                    :new_password_confirmation => 'secret1234'
+    assert_response :success
+    assert_select_error /Password doesn.*t match confirmation/
+    assert User.try_to_login('jsmith', 'jsmith')
+  end
 
-    jsmith = User.find(2)
-    jsmith.passwd_changed_on = Time.now
-    jsmith.save!
-
-    get 'account'
-    assert_response 302
-    assert flash[:error].match(/Your session has expired/)
+  def test_update_password_with_wrong_password
+    # wrong password
+    post :password, :password => 'wrongpassword',
+                    :new_password => 'secret123',
+                    :new_password_confirmation => 'secret123'
+    assert_response :success
+    assert_equal 'Wrong password', flash[:error]
+    assert User.try_to_login('jsmith', 'jsmith')
   end
 
   def test_change_password_should_redirect_if_user_cannot_change_its_password
@@ -205,10 +208,34 @@ class MyControllerTest < ActionController::TestCase
     assert_redirected_to '/my/account'
   end
 
+  def test_update_password_should_send_security_notification
+    ActionMailer::Base.deliveries.clear
+    post :password, :password => 'jsmith',
+                    :new_password => 'secret123',
+                    :new_password_confirmation => 'secret123'
+
+    assert_not_nil (mail = ActionMailer::Base.deliveries.last)
+    assert_mail_body_no_match 'secret123', mail # just to be sure: pw should never be sent!
+    assert_select_email do
+      assert_select 'a[href^=?]', 'http://localhost:3000/my/password', :text => 'Change password'
+    end
+  end
+
+  def test_update_page_with_blank_preferences
+    user = User.generate!(:language => 'en')
+    @request.session[:user_id] = user.id
+
+    xhr :post, :update_page, :settings => {'timelog' => {'days' => '14'}}
+    assert_response :success
+    assert_include '$("#block-timelog").html(', response.body
+    assert_include '14 days', response.body
+
+    assert_equal({:days => "14"}, user.reload.pref.my_page_settings('timelog'))
+  end
+
   def test_page_layout
     get :page_layout
     assert_response :success
-    assert_template 'page_layout'
   end
 
   def test_add_block

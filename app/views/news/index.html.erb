@@ -37,14 +37,14 @@
     </article>
 <% end %>
 <% end %>
-<p class="pagination"><%= pagination_links_full @news_pages %></p>
+<span class="pagination"><%= pagination_links_full @news_pages %></span>
 
 <% other_formats_links do |f| %>
   <%= f.link_to 'Atom', :url => {:project_id => @project, :key => User.current.rss_key} %>
 <% end %>
 
 <% content_for :header_tags do %>
-  <%= auto_discovery_link_tag(:atom, params.merge({:format => 'atom', :page => nil, :key => User.current.rss_key})) %>
+  <%= auto_discovery_link_tag(:atom, _project_news_path(@project, :key => User.current.rss_key, :format => 'atom')) %>
   <%= stylesheet_link_tag 'scm' %>
 <% end %>
 

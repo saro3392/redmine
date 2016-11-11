@@ -39,7 +39,10 @@ module ObjectHelpers
     project
   end
 
-  def Project.generate_with_parent!(parent, attributes={})
+  def Project.generate_with_parent!(*args)
+    attributes = args.last.is_a?(Hash) ? args.pop : {}
+    parent = args.size > 0 ? args.first : Project.generate!
+
     project = Project.generate!(attributes) do |p|
       p.parent = parent
     end
@@ -57,13 +60,18 @@ module ObjectHelpers
     status
   end
 
-  def Tracker.generate!(attributes={})
+  def Tracker.generate(attributes={})
     @generated_tracker_name ||= 'Tracker 0'
     @generated_tracker_name.succ!
     tracker = Tracker.new(attributes)
     tracker.name = @generated_tracker_name.dup if tracker.name.blank?
     tracker.default_status ||= IssueStatus.order('position').first || IssueStatus.generate!
     yield tracker if block_given?
+    tracker
+  end
+
+  def Tracker.generate!(attributes={}, &block)
+    tracker = Tracker.generate(attributes, &block)
     tracker.save!
     tracker
   end
@@ -187,12 +195,19 @@ module ObjectHelpers
     field
   end
 
+  def IssueCustomField.generate!(attributes={})
+    super do |field|
+      field.is_for_all = true unless attributes.key?(:is_for_all)
+      field.tracker_ids = Tracker.all.ids unless attributes.key?(:tracker_ids) || attributes.key?(:trackers)
+    end
+  end
+
   def Changeset.generate!(attributes={})
     @generated_changeset_rev ||= '123456'
     @generated_changeset_rev.succ!
     changeset = new(attributes)
     changeset.repository ||= Project.find(1).repository
-    changeset.revision ||= @generated_changeset_rev
+    changeset.revision ||= @generated_changeset_rev.dup
     changeset.committed_on ||= Time.now
     yield changeset if block_given?
     changeset.save!
@@ -206,24 +221,43 @@ module ObjectHelpers
     query.save!
     query
   end
+
+  def generate_import(fixture_name='import_issues.csv')
+    import = IssueImport.new
+    import.user_id = 2
+    import.file = uploaded_test_file(fixture_name, 'text/csv')
+    import.save!
+    import
+  end
+
+  def generate_import_with_mapping(fixture_name='import_issues.csv')
+    import = generate_import(fixture_name)
+
+    import.settings = {
+      'separator' => ";", 'wrapper' => '"', 'encoding' => "UTF-8",
+      'mapping' => {'project_id' => '1', 'tracker' => '13', 'subject' => '1'}
+    }
+    import.save!
+    import
+  end
 end
 
 module TrackerObjectHelpers
-  def generate_transitions!(*args)
-    options = args.last.is_a?(Hash) ? args.pop : {}
-    if args.size == 1
-      args << args.first
-    end
-    if options[:clear]
+  def generate_transitions!(arg)
+    if arg.delete(:clear)
       WorkflowTransition.where(:tracker_id => id).delete_all
     end
-    args.each_cons(2) do |old_status_id, new_status_id|
-      WorkflowTransition.create!(
-        :tracker => self,
-        :role_id => (options[:role_id] || 1),
-        :old_status_id => old_status_id,
-        :new_status_id => new_status_id
-      )
+    role_id = arg.delete(:role_id) || 1
+
+    arg.each do |old_status_id, new_status_ids|
+      Array.wrap(new_status_ids).each do |new_status_id|
+        WorkflowTransition.create!(
+          :tracker => self,
+          :role_id => role_id,
+          :old_status_id => old_status_id,
+          :new_status_id => new_status_id
+        )
+      end
     end
   end
 end

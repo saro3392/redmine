@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -49,8 +49,11 @@ Rails.application.routes.draw do
   match '/issues/changes', :to => 'journals#index', :as => 'issue_changes', :via => :get
   match '/issues/:id/quoted', :to => 'journals#new', :id => /\d+/, :via => :post, :as => 'quoted_issue'
 
-  match '/journals/diff/:id', :to => 'journals#diff', :id => /\d+/, :via => :get
-  match '/journals/edit/:id', :to => 'journals#edit', :id => /\d+/, :via => [:get, :post]
+  resources :journals, :only => [:edit, :update] do
+    member do
+      get 'diff'
+    end
+  end
 
   get '/projects/:project_id/issues/gantt', :to => 'gantts#show', :as => 'project_gantt'
   get '/issues/gantt', :to => 'gantts#show'
@@ -61,13 +64,21 @@ Rails.application.routes.draw do
   get 'projects/:id/issues/report', :to => 'reports#issue_report', :as => 'project_issues_report'
   get 'projects/:id/issues/report/:detail', :to => 'reports#issue_report_details', :as => 'project_issues_report_details'
 
+  get   '/issues/imports/new', :to => 'imports#new', :as => 'new_issues_import'
+  post  '/imports', :to => 'imports#create', :as => 'imports'
+  get   '/imports/:id', :to => 'imports#show', :as => 'import'
+  match '/imports/:id/settings', :to => 'imports#settings', :via => [:get, :post], :as => 'import_settings'
+  match '/imports/:id/mapping', :to => 'imports#mapping', :via => [:get, :post], :as => 'import_mapping'
+  match '/imports/:id/run', :to => 'imports#run', :via => [:get, :post], :as => 'import_run'
+
   match 'my/account', :controller => 'my', :action => 'account', :via => [:get, :post]
   match 'my/account/destroy', :controller => 'my', :action => 'destroy', :via => [:get, :post]
   match 'my/page', :controller => 'my', :action => 'page', :via => :get
+  post 'my/page', :to => 'my#update_page'
   match 'my', :controller => 'my', :action => 'index', :via => :get # Redirects to my/page
-  match 'my/reset_rss_key', :controller => 'my', :action => 'reset_rss_key', :via => :post
-  match 'my/reset_api_key', :controller => 'my', :action => 'reset_api_key', :via => :post
-  match 'my/api_key', :controller => 'my', :action => 'show_api_key', :via => :get
+  get 'my/api_key', :to => 'my#show_api_key', :as => 'my_api_key'
+  post 'my/api_key', :to => 'my#reset_api_key'
+  post 'my/rss_key', :to => 'my#reset_rss_key', :as => 'my_rss_key'
   match 'my/password', :controller => 'my', :action => 'password', :via => [:get, :post]
   match 'my/page_layout', :controller => 'my', :action => 'page_layout', :via => :get
   match 'my/add_block', :controller => 'my', :action => 'add_block', :via => :post
@@ -81,7 +92,7 @@ Rails.application.routes.draw do
 
   post 'watchers/watch', :to => 'watchers#watch', :as => 'watch'
   delete 'watchers/watch', :to => 'watchers#unwatch'
-  get 'watchers/new', :to => 'watchers#new'
+  get 'watchers/new', :to => 'watchers#new', :as => 'new_watchers'
   post 'watchers', :to => 'watchers#create'
   post 'watchers/append', :to => 'watchers#append'
   delete 'watchers', :to => 'watchers#destroy'
@@ -146,7 +157,7 @@ Rails.application.routes.draw do
     end
   
     match 'wiki/index', :controller => 'wiki', :action => 'index', :via => :get
-    resources :wiki, :except => [:index, :new, :create], :as => 'wiki_page' do
+    resources :wiki, :except => [:index, :create], :as => 'wiki_page' do
       member do
         get 'rename'
         post 'rename'
@@ -159,6 +170,7 @@ Rails.application.routes.draw do
       collection do
         get 'export'
         get 'date_index'
+        post 'new'
       end
     end
     match 'wiki', :controller => 'wiki', :action => 'show', :via => :get
@@ -177,11 +189,7 @@ Rails.application.routes.draw do
       match 'bulk_edit', :via => [:get, :post]
       post 'bulk_update'
     end
-    resources :time_entries, :controller => 'timelog', :except => [:show, :edit, :update, :destroy] do
-      collection do
-        get 'report'
-      end
-    end
+    resources :time_entries, :controller => 'timelog', :only => [:new, :create]
     shallow do
       resources :relations, :controller => 'issue_relations', :only => [:index, :show, :create, :destroy]
     end
@@ -235,13 +243,13 @@ Rails.application.routes.draw do
   post   'projects/:id/repository/:repository_id/revisions/:rev/issues', :to => 'repositories#add_related_issue'
   delete 'projects/:id/repository/:repository_id/revisions/:rev/issues/:issue_id', :to => 'repositories#remove_related_issue'
   get 'projects/:id/repository/:repository_id/revisions', :to => 'repositories#revisions'
-  get 'projects/:id/repository/:repository_id/revisions/:rev/:action(/*path)',
-      :controller => 'repositories',
-      :format => false,
-      :constraints => {
-            :action => /(browse|show|entry|raw|annotate|diff)/,
-            :rev    => /[a-z0-9\.\-_]+/
-          }
+  %w(browse show entry raw annotate diff).each do |action|
+    get "projects/:id/repository/:repository_id/revisions/:rev/#{action}(/*path)",
+        :controller => 'repositories',
+        :action => action,
+        :format => false,
+        :constraints => {:rev => /[a-z0-9\.\-_]+/}
+  end
 
   get 'projects/:id/repository/statistics', :to => 'repositories#stats'
   get 'projects/:id/repository/graph', :to => 'repositories#graph'
@@ -255,21 +263,28 @@ Rails.application.routes.draw do
   get 'projects/:id/repository/revision', :to => 'repositories#revision'
   post   'projects/:id/repository/revisions/:rev/issues', :to => 'repositories#add_related_issue'
   delete 'projects/:id/repository/revisions/:rev/issues/:issue_id', :to => 'repositories#remove_related_issue'
-  get 'projects/:id/repository/revisions/:rev/:action(/*path)',
-      :controller => 'repositories',
-      :format => false,
-      :constraints => {
-            :action => /(browse|show|entry|raw|annotate|diff)/,
-            :rev    => /[a-z0-9\.\-_]+/
-          }
-  get 'projects/:id/repository/:repository_id/:action(/*path)',
-      :controller => 'repositories',
-      :action => /(browse|show|entry|raw|changes|annotate|diff)/,
-      :format => false
-  get 'projects/:id/repository/:action(/*path)',
-      :controller => 'repositories',
-      :action => /(browse|show|entry|raw|changes|annotate|diff)/,
-      :format => false
+  %w(browse show entry raw annotate diff).each do |action|
+    get "projects/:id/repository/revisions/:rev/#{action}(/*path)",
+        :controller => 'repositories',
+        :action => action,
+        :format => false,
+        :constraints => {:rev => /[a-z0-9\.\-_]+/}
+  end
+  %w(browse entry raw changes annotate diff).each do |action|
+    get "projects/:id/repository/:repository_id/#{action}(/*path)",
+        :controller => 'repositories',
+        :action => action,
+        :format => false
+  end
+  %w(browse entry raw changes annotate diff).each do |action|
+    get "projects/:id/repository/#{action}(/*path)",
+        :controller => 'repositories',
+        :action => action,
+        :format => false
+  end
+
+  get 'projects/:id/repository/:repository_id/show/*path', :to => 'repositories#show', :format => false
+  get 'projects/:id/repository/show/*path', :to => 'repositories#show', :format => false
 
   get 'projects/:id/repository/:repository_id', :to => 'repositories#show', :path => nil
   get 'projects/:id/repository', :to => 'repositories#show', :path => nil
@@ -279,9 +294,9 @@ Rails.application.routes.draw do
   get 'attachments/download/:id/:filename', :to => 'attachments#download', :id => /\d+/, :filename => /.*/, :as => 'download_named_attachment'
   get 'attachments/download/:id', :to => 'attachments#download', :id => /\d+/
   get 'attachments/thumbnail/:id(/:size)', :to => 'attachments#thumbnail', :id => /\d+/, :size => /\d+/, :as => 'thumbnail'
-  resources :attachments, :only => [:show, :destroy]
-  get 'attachments/:object_type/:object_id/edit', :to => 'attachments#edit', :as => :object_attachments_edit
-  patch 'attachments/:object_type/:object_id', :to => 'attachments#update', :as => :object_attachments
+  resources :attachments, :only => [:show, :update, :destroy]
+  get 'attachments/:object_type/:object_id/edit', :to => 'attachments#edit_all', :as => :object_attachments_edit
+  patch 'attachments/:object_type/:object_id', :to => 'attachments#update_all', :as => :object_attachments
 
   resources :groups do
     resources :memberships, :controller => 'principal_memberships'
@@ -304,7 +319,10 @@ Rails.application.routes.draw do
       post 'update_issue_done_ratio'
     end
   end
-  resources :custom_fields, :except => :show
+  resources :custom_fields, :except => :show do
+    resources :enumerations, :controller => 'custom_field_enumerations', :except => [:show, :new, :edit]
+    put 'enumerations', :to => 'custom_field_enumerations#update_each'
+  end
   resources :roles do
     collection do
       match 'permissions', :via => [:get, :post]

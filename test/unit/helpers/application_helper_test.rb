@@ -1,7 +1,7 @@
 # encoding: utf-8
 #
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -19,13 +19,14 @@
 
 require File.expand_path('../../../test_helper', __FILE__)
 
-class ApplicationHelperTest < ActionView::TestCase
+class ApplicationHelperTest < Redmine::HelperTest
   include Redmine::I18n
   include ERB::Util
   include Rails.application.routes.url_helpers
 
-  fixtures :projects, :roles, :enabled_modules, :users,
-           :email_addresses,
+  fixtures :projects, :enabled_modules,
+           :users, :email_addresses,
+           :members, :member_roles, :roles,
            :repositories, :changesets,
            :projects_trackers,
            :trackers, :issue_statuses, :issues, :versions, :documents,
@@ -116,7 +117,7 @@ class ApplicationHelperTest < ActionView::TestCase
   def test_inline_images
     to_test = {
       '!http://foo.bar/image.jpg!' => '<img src="http://foo.bar/image.jpg" alt="" />',
-      'floating !>http://foo.bar/image.jpg!' => 'floating <div style="float:right"><img src="http://foo.bar/image.jpg" alt="" /></div>',
+      'floating !>http://foo.bar/image.jpg!' => 'floating <span style="float:right"><img src="http://foo.bar/image.jpg" alt="" /></span>',
       'with class !(some-class)http://foo.bar/image.jpg!' => 'with class <img src="http://foo.bar/image.jpg" class="some-class" alt="" />',
       'with style !{width:100px;height:100px}http://foo.bar/image.jpg!' => 'with style <img src="http://foo.bar/image.jpg" style="width:100px;height:100px;" alt="" />',
       'with title !http://foo.bar/image.jpg(This is a title)!' => 'with title <img src="http://foo.bar/image.jpg" title="This is a title" alt="This is a title" />',
@@ -164,7 +165,7 @@ RAW
 
     attachment = Attachment.generate!(:filename => 'café.jpg')
     with_settings :text_formatting => 'markdown' do
-      assert_include %(<img src="/attachments/download/#{attachment.id}/caf%C3%A9.jpg" alt="">),
+      assert_include %(<img src="/attachments/download/#{attachment.id}/caf%C3%A9.jpg" alt="" />),
         textilizable("![](café.jpg)", :attachments => [attachment])
     end
   end
@@ -276,11 +277,11 @@ RAW
 
   def test_redmine_links
     issue_link = link_to('#3', {:controller => 'issues', :action => 'show', :id => 3},
-                               :class => Issue.find(3).css_classes, :title => 'Error 281 when updating a recipe (New)')
+                               :class => Issue.find(3).css_classes, :title => 'Bug: Error 281 when updating a recipe (New)')
     note_link = link_to('#3-14', {:controller => 'issues', :action => 'show', :id => 3, :anchor => 'note-14'},
-                               :class => Issue.find(3).css_classes, :title => 'Error 281 when updating a recipe (New)')
+                               :class => Issue.find(3).css_classes, :title => 'Bug: Error 281 when updating a recipe (New)')
     note_link2 = link_to('#3#note-14', {:controller => 'issues', :action => 'show', :id => 3, :anchor => 'note-14'},
-                               :class => Issue.find(3).css_classes, :title => 'Error 281 when updating a recipe (New)')
+                               :class => Issue.find(3).css_classes, :title => 'Bug: Error 281 when updating a recipe (New)')
 
     revision_link = link_to('r1', {:controller => 'repositories', :action => 'revision', :id => 'ecookbook', :rev => 1},
                                    :class => 'changeset', :title => 'My very first commit do not escaping #<>&')
@@ -964,7 +965,7 @@ RAW
     result2 = link_to('#1',
                       "/issues/1",
                       :class => Issue.find(1).css_classes,
-                      :title => "Cannot print recipes (New)")
+                      :title => "Bug: Cannot print recipes (New)")
 
     expected = <<-EXPECTED
 <p>#{result1}</p>
@@ -992,6 +993,12 @@ EXPECTED
 
     @project = Project.find(1)
     assert_equal expected.gsub(%r{[\r\n\t]}, ''), textilizable(raw).gsub(%r{[\r\n\t]}, '')
+  end
+
+  def test_unbalanced_closing_pre_tag_should_not_error
+    assert_nothing_raised do
+      textilizable("unbalanced</pre>")
+    end
   end
 
   def test_syntax_highlight
@@ -1160,10 +1167,10 @@ RAW
                   '<li><a href="#Title">Title</a>' +
                     '<ul>' +
                       '<li><a href="#Subtitle">Subtitle</a></li>' +
-                      '<li><a href="#Subtitle-2">Subtitle</a></li>'
-                    '</ul>'
+                      '<li><a href="#Subtitle-2">Subtitle</a></li>' +
+                    '</ul>' +
                   '</li>' +
-               '</ul>'
+                '</ul>'
 
     @project = Project.find(1)
     result = textilizable(raw).gsub("\n", "")
@@ -1236,15 +1243,15 @@ RAW
     result = textilizable(raw, :edit_section_links => {:controller => 'wiki', :action => 'edit', :project_id => '1', :id => 'Test'}).gsub("\n", "")
 
     # heading that contains inline code
-    assert_match Regexp.new('<div class="contextual" title="Edit this section" id="section-4">' +
-      '<a href="/projects/1/wiki/Test/edit\?section=4"><img src="/images/edit.png(\?\d+)?" alt="Edit" /></a></div>' +
+    assert_match Regexp.new('<div class="contextual heading-2" title="Edit this section" id="section-4">' +
+      '<a class="icon-only icon-edit" href="/projects/1/wiki/Test/edit\?section=4">Edit this section</a></div>' +
       '<a name="Subtitle-with-inline-code"></a>' +
       '<h2 >Subtitle with <code>inline code</code><a href="#Subtitle-with-inline-code" class="wiki-anchor">&para;</a></h2>'),
       result
 
     # last heading
-    assert_match Regexp.new('<div class="contextual" title="Edit this section" id="section-5">' +
-      '<a href="/projects/1/wiki/Test/edit\?section=5"><img src="/images/edit.png(\?\d+)?" alt="Edit" /></a></div>' +
+    assert_match Regexp.new('<div class="contextual heading-2" title="Edit this section" id="section-5">' +
+      '<a class="icon-only icon-edit" href="/projects/1/wiki/Test/edit\?section=5">Edit this section</a></div>' +
       '<a name="Subtitle-after-pre-tag"></a>' +
       '<h2 >Subtitle after pre tag<a href="#Subtitle-after-pre-tag" class="wiki-anchor">&para;</a></h2>'),
       result
@@ -1255,6 +1262,13 @@ RAW
       text = 'a *link*: http://www.example.net/'
       assert_equal '<p>a *link*: <a class="external" href="http://www.example.net/">http://www.example.net/</a></p>', textilizable(text)
     end
+  end
+
+  def test_parse_redmine_links_should_handle_a_tag_without_attributes
+    text = '<a>http://example.com</a>'
+    expected = text.dup
+    parse_redmine_links(text, nil, nil, nil, true, {})
+    assert_equal expected, text
   end
 
   def test_due_date_distance_in_words
@@ -1524,5 +1538,10 @@ RAW
     result = truncate_single_line_raw("#{ja}\n#{ja}\n#{ja}", 10)
     assert_equal "#{ja} #{ja}...", result
     assert !result.html_safe?
+  end
+
+  def test_back_url_should_remove_utf8_checkmark_from_referer
+    stubs(:request).returns(stub(:env => {'HTTP_REFERER' => "/path?utf8=\u2713&foo=bar"}))
+    assert_equal "/path?foo=bar", back_url
   end
 end

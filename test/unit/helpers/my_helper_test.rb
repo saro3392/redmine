@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -17,7 +17,7 @@
 
 require File.expand_path('../../../test_helper', __FILE__)
 
-class MyHelperTest < ActionView::TestCase
+class MyHelperTest < Redmine::HelperTest
   include Redmine::I18n
   include ERB::Util
   include MyHelper
@@ -37,7 +37,7 @@ class MyHelperTest < ActionView::TestCase
     entry = TimeEntry.generate!(:spent_on => Date.today, :user_id => 2, :project_id => 1)
     assert_nil entry.issue
 
-    assert_include entry, timelog_items
+    assert_include entry, timelog_items.first
   end
 
   def test_timelog_items_should_include_time_entries_with_issue
@@ -45,6 +45,6 @@ class MyHelperTest < ActionView::TestCase
     entry = TimeEntry.generate!(:spent_on => Date.today, :user_id => 2, :project_id => 1, :issue_id => 1)
     assert_not_nil entry.issue
 
-    assert_include entry, timelog_items
+    assert_include entry, timelog_items.first
   end
 end

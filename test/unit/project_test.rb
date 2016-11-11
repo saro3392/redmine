@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -142,6 +142,12 @@ class ProjectTest < ActiveSupport::TestCase
     assert_equal true, Project.find(1).identifier_frozen?
   end
 
+  def test_to_param_should_be_nil_for_new_records
+    project = Project.new
+    project.identifier = "foo"
+    assert_nil project.to_param
+  end
+
   def test_members_should_be_active_users
     Project.all.each do |project|
       assert_nil project.members.detect {|m| !(m.user.is_a?(User) && m.user.active?) }
@@ -218,8 +224,8 @@ class ProjectTest < ActiveSupport::TestCase
 
   def test_destroy_should_destroy_subtasks
     issues = (0..2).to_a.map {Issue.create!(:project_id => 1, :tracker_id => 1, :author_id => 1, :subject => 'test')}
-    issues[0].update_attribute :parent_issue_id, issues[1].id
-    issues[2].update_attribute :parent_issue_id, issues[1].id
+    issues[0].update! :parent_issue_id => issues[1].id
+    issues[2].update! :parent_issue_id => issues[1].id
     assert_equal 2, issues[1].children.count
 
     assert_nothing_raised do
@@ -656,7 +662,7 @@ class ProjectTest < ActiveSupport::TestCase
   test "enabled_modules should define module by names and preserve ids" do
     @project = Project.find(1)
     # Remove one module
-    modules = @project.enabled_modules.slice(0..-2)
+    modules = @project.enabled_modules.to_a.slice(0..-2)
     assert modules.any?
     assert_difference 'EnabledModule.count', -1 do
       @project.enabled_module_names = modules.collect(&:name)
@@ -701,7 +707,7 @@ class ProjectTest < ActiveSupport::TestCase
   def test_enabled_module_names_should_not_recreate_enabled_modules
     project = Project.find(1)
     # Remove one module
-    modules = project.enabled_modules.slice(0..-2)
+    modules = project.enabled_modules.to_a.slice(0..-2)
     assert modules.any?
     assert_difference 'EnabledModule.count', -1 do
       project.enabled_module_names = modules.collect(&:name)
@@ -723,11 +729,24 @@ class ProjectTest < ActiveSupport::TestCase
 
     # Duplicated attributes
     assert_equal source_project.description, copied_project.description
-    assert_equal source_project.enabled_modules, copied_project.enabled_modules
     assert_equal source_project.trackers, copied_project.trackers
 
     # Default attributes
     assert_equal 1, copied_project.status
+  end
+
+  def test_copy_from_should_copy_enabled_modules
+    source = Project.generate!
+    source.enabled_module_names = %w(issue_tracking wiki)
+
+    copy = Project.copy_from(source)
+    copy.name = 'Copy'
+    copy.identifier = 'copy'
+    assert_difference 'EnabledModule.count', 2 do
+      copy.save!
+    end
+    assert_equal 2, copy.reload.enabled_modules.count
+    assert_equal 2, source.reload.enabled_modules.count
   end
 
   def test_activities_should_use_the_system_activities
@@ -971,5 +990,14 @@ class ProjectTest < ActiveSupport::TestCase
     p = Project.new
     p.status = Project::STATUS_CLOSED
     assert_include 'closed', p.css_classes.split
+  end
+
+  def test_combination_of_visible_and_distinct_scopes_in_case_anonymous_group_has_memberships_should_not_error
+    project = Project.find(1)
+    member = Member.create!(:project => project, :principal => Group.anonymous, :roles => [Role.generate!])
+    project.members << member
+    assert_nothing_raised do
+      Project.distinct.visible.to_a
+    end
   end
 end

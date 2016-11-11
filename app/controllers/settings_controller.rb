@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -21,7 +21,7 @@ class SettingsController < ApplicationController
 
   helper :queries
 
-  before_filter :require_admin
+  before_action :require_admin
 
   require_sudo_mode :index, :edit, :plugin
 
@@ -32,12 +32,10 @@ class SettingsController < ApplicationController
 
   def edit
     @notifiables = Redmine::Notifiable.all
-    if request.post? && params[:settings] && params[:settings].is_a?(Hash)
-      settings = (params[:settings] || {}).dup.symbolize_keys
-      settings.each do |name, value|
-        Setting.set_from_params name, value
+    if request.post?
+      if Setting.set_all_from_params(params[:settings])
+        flash[:notice] = l(:notice_successful_update)
       end
-      flash[:notice] = l(:notice_successful_update)
       redirect_to settings_path(:tab => params[:tab])
     else
       @options = {}
@@ -63,7 +61,7 @@ class SettingsController < ApplicationController
     end
 
     if request.post?
-      Setting.send "plugin_#{@plugin.id}=", params[:settings]
+      Setting.send "plugin_#{@plugin.id}=", params[:settings].permit!.to_h
       flash[:notice] = l(:notice_successful_update)
       redirect_to plugin_settings_path(@plugin)
     else

@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -15,17 +15,20 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
+require 'uri'
+
 module Redmine
-  module Views
-    module MyPage
-      module Block
-        def self.additional_blocks
-          @@additional_blocks ||= Dir.glob("#{Redmine::Plugin.directory}/*/app/views/my/blocks/_*.{rhtml,erb}").inject({}) do |h,file|
-            name = File.basename(file).split('.').first.gsub(/^_/, '')
-            h[name] = name.to_sym
-            h
-          end
-        end
+  module Helpers
+    module URL
+      def uri_with_safe_scheme?(uri, schemes = ['http', 'https', 'ftp', 'mailto', nil])
+        # URLs relative to the current document or document root (without a protocol
+        # separator, should be harmless
+        return true unless uri.to_s.include? ":"
+    
+        # Other URLs need to be parsed
+        schemes.include? URI.parse(uri).scheme
+      rescue URI::InvalidURIError
+        false
       end
     end
   end

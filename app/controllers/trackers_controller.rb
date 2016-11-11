@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -18,30 +18,28 @@
 class TrackersController < ApplicationController
   layout 'admin'
 
-  before_filter :require_admin, :except => :index
-  before_filter :require_admin_or_api_request, :only => :index
+  before_action :require_admin, :except => :index
+  before_action :require_admin_or_api_request, :only => :index
   accept_api_auth :index
 
   def index
+    @trackers = Tracker.sorted.to_a
     respond_to do |format|
-      format.html {
-        @tracker_pages, @trackers = paginate Tracker.sorted, :per_page => 25
-        render :action => "index", :layout => false if request.xhr?
-      }
-      format.api {
-        @trackers = Tracker.sorted.to_a
-      }
+      format.html { render :layout => false if request.xhr? }
+      format.api
     end
   end
 
   def new
-    @tracker ||= Tracker.new(params[:tracker])
+    @tracker ||= Tracker.new
+    @tracker.safe_attributes = params[:tracker]
     @trackers = Tracker.sorted.to_a
     @projects = Project.all
   end
 
   def create
-    @tracker = Tracker.new(params[:tracker])
+    @tracker = Tracker.new
+    @tracker.safe_attributes = params[:tracker]
     if @tracker.save
       # workflow copy
       if !params[:copy_workflow_from].blank? && (copy_from = Tracker.find_by_id(params[:copy_workflow_from]))
@@ -62,13 +60,24 @@ class TrackersController < ApplicationController
 
   def update
     @tracker = Tracker.find(params[:id])
-    if @tracker.update_attributes(params[:tracker])
-      flash[:notice] = l(:notice_successful_update)
-      redirect_to trackers_path(:page => params[:page])
-      return
+    @tracker.safe_attributes = params[:tracker]
+    if @tracker.save
+      respond_to do |format|
+        format.html {
+          flash[:notice] = l(:notice_successful_update)
+          redirect_to trackers_path(:page => params[:page])
+        }
+        format.js { head 200 }
+      end
+    else
+      respond_to do |format|
+        format.html {
+          edit
+          render :action => 'edit'
+        }
+        format.js { head 422 }
+      end
     end
-    edit
-    render :action => 'edit'
   end
 
   def destroy

@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -26,6 +26,10 @@ class Redmine::WikiFormatting::MarkdownFormatterTest < ActionView::TestCase
 
   def test_syntax_error_in_image_reference_should_not_raise_exception
     assert @formatter.new("!>[](foo.png)").to_html
+  end
+
+  def test_empty_image_should_not_raise_exception
+    assert @formatter.new("![]()").to_html
   end
 
   # re-using the formatter after getting above error crashes the

@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -18,9 +18,9 @@
 class CustomFieldsController < ApplicationController
   layout 'admin'
 
-  before_filter :require_admin
-  before_filter :build_new_custom_field, :only => [:new, :create]
-  before_filter :find_custom_field, :only => [:edit, :update, :destroy]
+  before_action :require_admin
+  before_action :build_new_custom_field, :only => [:new, :create]
+  before_action :find_custom_field, :only => [:edit, :update, :destroy]
   accept_api_auth :index
 
   def index
@@ -43,7 +43,7 @@ class CustomFieldsController < ApplicationController
     if @custom_field.save
       flash[:notice] = l(:notice_successful_create)
       call_hook(:controller_custom_fields_new_after_save, :params => params, :custom_field => @custom_field)
-      redirect_to custom_fields_path(:tab => @custom_field.class.name)
+      redirect_to edit_custom_field_path(@custom_field)
     else
       render :action => 'new'
     end
@@ -53,12 +53,21 @@ class CustomFieldsController < ApplicationController
   end
 
   def update
-    if @custom_field.update_attributes(params[:custom_field])
-      flash[:notice] = l(:notice_successful_update)
+    @custom_field.safe_attributes = params[:custom_field]
+    if @custom_field.save
       call_hook(:controller_custom_fields_edit_after_save, :params => params, :custom_field => @custom_field)
-      redirect_to custom_fields_path(:tab => @custom_field.class.name)
+      respond_to do |format|
+        format.html {
+          flash[:notice] = l(:notice_successful_update)
+          redirect_back_or_default edit_custom_field_path(@custom_field)
+        }
+        format.js { head 200 }
+      end
     else
-      render :action => 'edit'
+      respond_to do |format|
+        format.html { render :action => 'edit' }
+        format.js { head 422 }
+      end
     end
   end
 
@@ -74,9 +83,11 @@ class CustomFieldsController < ApplicationController
   private
 
   def build_new_custom_field
-    @custom_field = CustomField.new_subclass_instance(params[:type], params[:custom_field])
+    @custom_field = CustomField.new_subclass_instance(params[:type])
     if @custom_field.nil?
       render :action => 'select_type'
+    else
+      @custom_field.safe_attributes = params[:custom_field]
     end
   end
 

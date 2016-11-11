@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2015  Jean-Philippe Lang
+# Copyright (C) 2006-2016  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -17,7 +17,7 @@
 
 require File.expand_path('../../test_helper', __FILE__)
 
-class RepositoriesFilesystemControllerTest < ActionController::TestCase
+class RepositoriesFilesystemControllerTest < Redmine::ControllerTest
   tests RepositoriesController
 
   fixtures :projects, :users, :email_addresses, :roles, :members, :member_roles,
@@ -45,9 +45,9 @@ class RepositoriesFilesystemControllerTest < ActionController::TestCase
       @project.repository.destroy
       get :new, :project_id => 'subproject1', :repository_scm => 'Filesystem'
       assert_response :success
-      assert_template 'new'
-      assert_kind_of Repository::Filesystem, assigns(:repository)
-      assert assigns(:repository).new_record?
+      assert_select 'select[name=?]', 'repository_scm' do
+        assert_select 'option[value=?][selected=selected]', 'Filesystem'
+      end
     end
 
     def test_browse_root
@@ -55,11 +55,15 @@ class RepositoriesFilesystemControllerTest < ActionController::TestCase
       @repository.reload
       get :show, :id => PRJ_ID
       assert_response :success
-      assert_template 'show'
-      assert_not_nil assigns(:entries)
-      assert assigns(:entries).size > 0
-      assert_not_nil assigns(:changesets)
-      assert assigns(:changesets).size == 0
+
+      assert_select 'table.entries tbody' do
+        assert_select 'tr', 3
+        assert_select 'tr.dir td.filename a', :text => 'dir'
+        assert_select 'tr.dir td.filename a', :text => 'japanese'
+        assert_select 'tr.file td.filename a', :text => 'test'
+      end
+
+      assert_select 'table.changesets tbody', 0
 
       assert_select 'input[name=rev]', 0
       assert_select 'a', :text => 'Statistics', :count => 0
@@ -69,7 +73,6 @@ class RepositoriesFilesystemControllerTest < ActionController::TestCase
     def test_show_no_extension
       get :entry, :id => PRJ_ID, :path => repository_path_hash(['test'])[:param]
       assert_response :success
-      assert_template 'entry'
       assert_select 'tr#L1 td.line-code', :text => /TEST CAT/
     end
 
@@ -84,7 +87,6 @@ class RepositoriesFilesystemControllerTest < ActionController::TestCase
         get :entry, :id => PRJ_ID,
             :path => repository_path_hash(['japanese', 'euc-jp.txt'])[:param]
         assert_response :success
-        assert_template 'entry'
         assert_select 'tr#L2 td.line-code', :text => /japanese/
         if @ruby19_non_utf8_pass
           puts "TODO: show repository file contents test fails " +
@@ -107,12 +109,13 @@ class RepositoriesFilesystemControllerTest < ActionController::TestCase
       end
     end
 
-    def test_show_text_file_should_send_if_too_big
+    def test_show_text_file_should_show_other_if_too_big
       with_settings :file_max_size_displayed => 1 do
         get :entry, :id => PRJ_ID,
             :path => repository_path_hash(['japanese', 'big-file.txt'])[:param]
         assert_response :success
-        assert_equal 'text/plain', @response.content_type
+        assert_equal 'text/html', @response.content_type
+        assert_select 'p.nodata'
       end
     end
 
